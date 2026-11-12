@@ -120,3 +120,22 @@ defn isPatterns()
     not matches("https://127.0.0.1:8080/*", u), matches("/a.b(c)", "http://x/a.b(c)"), not matches("/a.b", "http://x/aXb"),
     matches("/", "http://x"), matches("/", "http://x/#top")])
 end
+
+defn isTabsAndPopups()
+  on(defn (p, hits)
+    _ = Eval("document.cookie = 'who=ana'", p)?
+    help = Popup(() -> Click(ByRole("link", name = "Help"), p), p)?
+    opened = Popup(() -> Click("#open", p), p)?
+    tab = NewTab(p)?
+    Go("$(text.Replace("/events.html", "", Eval("location.href", p)?))/form.html", tab)?
+    out = list.All([
+      Text("#target", help)? == "the new page",
+      Text("h1", opened)? == "Form",
+      Eval("document.cookie", tab)? == "who=ana",
+      Popup(() -> Click("h1", p), p, timeout = 0.2).Error.Kind == "timeout"])
+    ClosePage(help)?
+    out and Text("h1", p)? == "Events" and browserError(Text("#target", help)) == "browser"
+  end)
+end
+
+browserError(r) = r.Error.Kind

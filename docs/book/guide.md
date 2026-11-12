@@ -111,6 +111,24 @@ window costs about 0.2 s, against 0.09 s for the first.
 `browser.ClosePage` closes a page and its user context. The pages still open close with the browser, so a program needs
 it only when it opens many pages.
 
+### Tabs and popups
+
+`browser.NewTab(p)` opens a page in the user context of `p`: it shares its cookies and its storage, as a second tab of
+one person does, for a test of what one tab sees of another. `browser.NewPage` stays the way to another person.
+
+`browser.Popup(action, p)` runs `action()` and gives the page that a page of `p`'s user context opened meanwhile, by
+`window.open` or by a link whose `target` is `_blank`, once it has loaded:
+
+```cesia norun
+defn help(p)
+  h = browser.Popup(() -> browser.Click(browser.ByRole("link", name = "Help"), p), p)?
+  browser.Text("h1", h)
+end
+```
+
+No page opened within `timeout` seconds after the action is an `Err` of the kind `"timeout"`. A tab and a popup share
+`p`'s user context, so they close with `p`; `browser.ClosePage` of one closes it alone.
+
 ### Frames
 
 A **frame**, the page that an `<iframe>` shows inside another, has its own document: a selector of the page doesn't

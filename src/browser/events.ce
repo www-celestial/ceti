@@ -67,3 +67,33 @@ defn Console(p)
       context, each cut to 16,384 characters, so that a page can't fill the memory. *)
   ask({Console: p.userContext}, p.session)
 end
+
+defn NewTab(p)
+  (** Opens a page in the user context of p: it shares its cookies and its storage, as a second tab of one person
+      does. NewPage is the way to another person. It closes with p's user context, or alone with ClosePage. An Ok of
+      the page, or an Err. *)
+  made = call("browsingContext.create", {type: "window", userContext: p.userContext}, p.session)?
+  result.Ok(page(made.context, p.userContext, missing, p.session, "tab"))
+end
+
+defn Popup(action, p, timeout = DefaultTimeout)
+  (** Runs action() and gives the page that a page of p's user context opened meanwhile, by window.open or by a link
+      whose target is _blank, once it has loaded, or once timeout seconds have passed when it loads nothing. It shares
+      p's cookies and storage, and closes alone with ClosePage. An Ok of the page, an Err of the kind "timeout" when no
+      page opened, or the action's Err. *)
+  loads = fiber.Channel(size = 64)
+  sub = call("session.subscribe", {events: ["browsingContext.contextCreated", "browsingContext.load"], userContexts: [p.userContext]}, p.session)?.subscription
+  id = watch(["browsingContext.load"], e -> true, e -> fiber.Send(e.context, loads), p.session, once = false)?
+  opened = during(["browsingContext.contextCreated"], e -> value.IsMissing(dict.GetOr("parent", missing, e)) and dict.GetOr("userContext", "", e) == p.userContext and dict.GetOr("context", "", e) != p.context, action, p, timeout)
+  if result.IsOk(opened)
+    until = sys.Now() + timeout
+    loaded = false
+    while not loaded and sys.Now() < until
+      got = fiber.Receive(loads, timeout = until - sys.Now())
+      loaded = result.IsOk(got) and got.Value == opened.Value.context
+    end
+  end
+  unwatch(id, p.session)
+  _ = call("session.unsubscribe", {subscriptions: [sub]}, p.session)
+  result.Ok(page(opened?.context, p.userContext, missing, p.session, "tab"))
+end
