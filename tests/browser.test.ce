@@ -1,7 +1,7 @@
 (* Headless Firefox against the pages of tests/pages, which each test serves itself on a free port. The tests start
    Firefox in the kept folder .cesia/firefox, where the first start makes the template of this version of Firefox; they
-   run one after the other, so each one can check that its profile went. A test that needs several scenarios runs them on
-   one browser, each on its page, since a start of Firefox takes about a second. *)
+   run one after the other, so each one can check that its profile went. A test that needs several scenarios runs them
+   on one browser, each on its page, since a start of Firefox takes about a second. *)
 use src/browser
 use std/bug
 use std/cesia
@@ -245,12 +245,12 @@ defn fingerprints(dir)
 end
 
 defn isRunsForget()
-  (** A run that writes a cookie, localStorage, IndexedDB and the HTTP cache, then a next run in the same kept folder, on
-      the same origin: the next one sees none of them and asks the server again, and the template is the same, file for
-      file and byte for byte, with no profile left beside it. The first run sees what it wrote, and its HTTP cache answers
-      the second fetch. A page can't see what another run kept, as each page has a user context of its own: a Ceti that
-      ran on the template itself, or made each run's profile the next template, passes the page checks and fails the
-      fingerprints. *)
+  (** A run that writes a cookie, localStorage, IndexedDB and the HTTP cache, then a next run in the same kept folder,
+      on the same origin: the next one sees none of them and asks the server again, and the template is the same, file
+      for file and byte for byte, with no profile left beside it. The first run sees what it wrote, and its HTTP cache
+      answers the second fetch. A page can't see what another run kept, as each page has a user context of its own: a
+      Ceti that ran on the template itself, or made each run's profile the next template, passes the page checks and
+      fails the fingerprints. *)
   hits = fiber.Channel(size = 100)
   l = net.Listen(0)?
   fiber.Spawn(() -> http.Serve(http.App() then http.Get("/cached", r -> cached(hits)) then http.Static("/", "tests/pages"), listener = l))
@@ -303,7 +303,8 @@ defn current()
   if result.IsOk(files) {Name: models[1], Files: files.Value} else missing end
 end
 
-(* The template as the tests of this file found it, when there was one: the last test compares it with what they left. *)
+(* The template as the tests of this file found it, when there was one: the last test compares it with what they
+   left. *)
 found = current()
 
 defn isTemplateUnchangedByTheTests()

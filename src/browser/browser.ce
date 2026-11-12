@@ -1,7 +1,8 @@
 (** Drives Firefox from Cesia, through WebDriver BiDi, the W3C protocol of browser automation: open a page, click, type,
     read a text, capture the screen, as a test of a web application or a program that automates pages does.
-    browser.Firefox starts a Firefox without a window on a profile of its own, gives it to a function, and closes it
-    whatever the function gives, as sql.Transaction does for a transaction. Each page has its own user context, so its
+    browser.Firefox starts a Firefox without a window on a profile of its own, a copy of the template that its folder
+    keeps for this version of Firefox, gives it to a function, and closes it whatever the function gives, as
+    sql.Transaction does for a transaction. Each page has its own user context, so its
     cookies and storage are its own. Click, Type, Text and WaitFor wait in the page for their element, in one round trip.
     The page comes last, as the list in list.Map(f, xs). Errors are values: an Err of {Kind, Message}, its Kind
     "timeout", "browser" (with the Code of BiDi), "script" or "closed". navigator.webdriver stays true: the browser
@@ -31,8 +32,8 @@ defn Firefox(f, dir, headless = true, program = "firefox")
       behind. The profile is a copy of the template that dir keeps for this version of Firefox: the profile of a Firefox
       started once and closed before any page, made at the first start in dir and again when the version changes, and
       never changed by a run, so that no run sees what another one did. A folder kept between runs, as .cesia/firefox,
-      gets Firefox ready in about 0.9 s instead of 2 s; the first start in it takes about 2.6 s more. headless = false
-      shows the window, to look at a problem. program is the command of Firefox, as
+      gets Firefox ready in about 1.0 s instead of 2.1 s; the first start in it, which makes the template, in about
+      4.2 s. headless = false shows the window, to look at a problem. program is the command of Firefox, as
       /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An Err of the kind "browser" when Firefox can't start,
       or doesn't end once closed. It needs exec= for program, net=127.0.0.1 for the port Firefox chooses, and read= and
       write= for dir, where the template and the profiles are made and the profiles removed. *)
@@ -115,10 +116,15 @@ defn template(dir, program)
   end
   build = newFolder(dir, "build")?
   made = firstStart(program, build)
-  if result.IsErr(made) or result.IsErr(sys.Rename(build, kept))
+  if result.IsErr(made)
     _ = removeTree(build)
-    if result.IsErr(made)
-      return made
+    return made
+  end
+  moved = sys.Rename(build, kept)
+  if result.IsErr(moved)
+    _ = removeTree(build)
+    if not sys.Exists(kept)
+      return moved
     end
   end
   for name in sys.List(dir)?
@@ -131,8 +137,9 @@ end
 
 defn version(program)
   (** The version of a Firefox and its build, as firefox --full-version writes them, "Mozilla Firefox 159.0
-      20261027034604 20261027034604": its words that hold a digit, joined by dashes, as 159.0-20261027034604-20261027034604.
-      Firefox itself starts on a profile as one of a new version when one of them changes. *)
+      20261027034604 20261027034604": its words that hold a digit, joined by dashes, as
+      159.0-20261027034604-20261027034604. Firefox itself starts on a profile as one of a new version when one of them
+      changes. *)
   ran = sys.Run(program, args = ["--full-version"])
   if result.IsErr(ran)
     return result.Err({Kind: "browser", Message: "$program didn't start: $(ran.Error.Message)"})
@@ -175,17 +182,17 @@ defn firstStart(program, profile)
 end
 
 defn copyTree(from, to)
-  (** Copies the files of a folder into another, at any depth: Ok(missing), or the first Err. A link is no part of a
-      profile once Firefox has ended, so it is left out. *)
+  (** Copies the files of a folder into another, at any depth: Ok(missing), or the first Err. A link, or one that leads
+      nowhere, is no part of a profile once Firefox has ended, so it is left out. *)
   for name in sys.List(from)?
     s = sys.Stat("$from/$name")
-    if result.IsErr(s) or s.Value.IsLink
-      (* a link, or one that leads nowhere *)
-    else if s.Value.IsDir
-      sys.Mkdir("$to/$name")?
-      copyTree("$from/$name", "$to/$name")?
-    else
-      sys.Write("$to/$name", sys.Read("$from/$name")?)?
+    if result.IsOk(s) and not s.Value.IsLink
+      if s.Value.IsDir
+        sys.Mkdir("$to/$name")?
+        copyTree("$from/$name", "$to/$name")?
+      else
+        sys.Write("$to/$name", sys.Read("$from/$name")?)?
+      end
     end
   end
   result.Ok(missing)
