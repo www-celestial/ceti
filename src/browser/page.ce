@@ -25,10 +25,12 @@ struct page { context, userContext, home, session, kind }
 (* The margin, in seconds, that a wait in the page has before Cesia stops waiting for its answer. *)
 margin = 1
 
-defn NewPage(b)
+defn NewPage(b, state = missing)
   (** Opens a page in a user context of its own, as a private window has: its cookies and its storage are its own,
       unseen by the other pages and unseeing theirs. It is visible, as a page that a person looks at, whatever other
-      pages are open, so that its timers and its frames run at full speed. An Ok of the page, or an Err. *)
+      pages are open, so that its timers and its frames run at full speed. With state, what State gave, as after a
+      sign-in, its user context starts with those cookies and that localStorage, and the page is on about:blank. An Ok
+      of the page, or an Err. *)
   uc = call("browser.createUserContext", {}, b)?.userContext
   beside = fiber.Receive(b.home, timeout = 0)
   params = if result.IsOk(beside) {type: "tab", userContext: uc, referenceContext: beside.Value} else {type: "window", userContext: uc} end
@@ -40,7 +42,13 @@ defn NewPage(b)
     _ = call("browser.removeUserContext", {userContext: uc}, b)
     return made
   end
-  result.Ok(page(made.Value.context, uc, if result.IsOk(beside) beside.Value else missing end, b, "page"))
+  p = page(made.Value.context, uc, if result.IsOk(beside) beside.Value else missing end, b, "page")
+  given = if value.IsMissing(state) result.Ok(missing) else restore(state, p) end
+  if result.IsErr(given)
+    _ = ClosePage(p)
+    return given
+  end
+  result.Ok(p)
 end
 
 defn ClosePage(p)

@@ -41,3 +41,36 @@ defn isFrames()
       text.Contains("not a frame", panics(() -> ClosePage(pay)))])
   end)
 end
+
+defn isState()
+  (** The state of a signed-in page, through JSON, gives a new page the same cookies and localStorage, and the server
+      sees no request for it; a page without it has none. *)
+  roots = fiber.Channel(size = 10)
+  root = defn (r)
+    fiber.Send(1, roots)
+    http.Plain("root")
+  end
+  l = net.Listen(0)?
+  fiber.Spawn(() -> http.Serve(http.App() then http.Get("/", root) then http.Static("/", "tests/pages"), listener = l))
+  site = "http://127.0.0.1:$(net.Port(l))"
+  Firefox(defn (b)
+    p = NewPage(b)?
+    Go("$site/form.html", p)?
+    _ = Eval("document.cookie = 'sid=abc; max-age=3600'; document.cookie = 'theme=dark'; localStorage.setItem('token', 't1')", p)?
+    s = result.Unwrap(json.Parse(json.Text(State(p)?)))
+    q = NewPage(b, state = s)?
+    blank = Eval("location.href", q)?
+    Go("$site/form.html", q)?
+    fresh = NewPage(b)?
+    Go("$site/form.html", fresh)?
+    list.All([
+      value.Equal(list.Sort([c.Name for c in s.Cookies]), ["sid", "theme"]),
+      value.Equal(dict.Get(site, s.Storage), {token: "t1"}),
+      blank == "about:blank",
+      Eval("document.cookie", q)? == "sid=abc; theme=dark",
+      Eval("localStorage.getItem('token')", q)? == "t1",
+      Eval("document.cookie", fresh)? == "",
+      result.IsErr(fiber.Receive(roots, timeout = 0)),
+      NewPage(b, state = {Cookies: [], Storage: {"file:///etc": {}}}).Error.Kind == "browser"])
+  end, kept)
+end

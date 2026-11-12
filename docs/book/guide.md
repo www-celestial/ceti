@@ -111,6 +111,33 @@ window costs about 0.2 s, against 0.09 s for the first.
 `browser.ClosePage` closes a page and its user context. The pages still open close with the browser, so a program needs
 it only when it opens many pages.
 
+### The state of a session
+
+A test that signs in once and then runs as that person keeps the **state** of the session: `browser.State(p)` gives the
+cookies of `p`'s user context and the `localStorage` of the page's origin, as plain data, `{Cookies, Storage}`, and
+`browser.NewPage(b, state = s)` opens a page whose user context starts with them:
+
+```cesia norun
+use std/json
+use std/result
+use std/sys
+
+defn saveSignIn(p)
+  sys.Write(".cesia/signed-in.json", json.Text(browser.State(p)?))
+end
+
+defn asAna(b)
+  s = result.Unwrap(json.Parse(sys.Read(".cesia/signed-in.json")?))
+  browser.NewPage(b, state = s)
+end
+```
+
+Each cookie is `{Name, Value, Domain, Path, HttpOnly, Secure, SameSite, Expires}`, `Expires` in seconds since 1970, or
+`missing` for a cookie that ends with the session. `Storage` is `{origin: {key: value}}`; BiDi reads no `localStorage`
+of another origin than the page's. To write it, Ceti opens an empty page of that origin, which it answers itself, so no
+server sees the request, then leaves the new page on `about:blank`. An origin that isn't `http:` or `https:` is refused.
+The file of a state holds what a signed-in person holds: keep it out of git, as in `.cesia/`.
+
 ### Tabs and popups
 
 `browser.NewTab(p)` opens a page in the user context of `p`: it shares its cookies and its storage, as a second tab of
