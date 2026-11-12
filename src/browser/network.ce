@@ -16,9 +16,13 @@ maxBody = 16777216
 
 defn matches(pattern, url)
   (** Does a pattern of Route or Response match a URL? A pattern that starts with / is matched against the path of the
-      URL, without its query; another against the whole URL. * stands for any run of characters.
+      URL, without its query; another against the whole URL. * stands for any run of characters. A URL that isn't a
+      text, as a message of Firefox could hold, matches none: the dispatcher runs this.
 
         matches("/api/*", "http://127.0.0.1:8080/api/items?page=2") --> true *)
+  if not value.IsText(url)
+    return false
+  end
   target = if text.StartsWith("/", pattern) pathOf(url) else url end
   quoted = [text.Join("", [if text.Contains(c, specials) "\\$c" else c end for c in text.Chars(part)]) for part in text.Split("*", pattern)]
   regex.Test("^$(text.Join(".*", quoted))$(text.Char(36))", target)
@@ -67,7 +71,7 @@ defn Route(pattern, handler, p)
   s = p.session
   call("session.subscribe", {events: ["network.beforeRequestSent"], contexts: [ctx]}, s)?
   call("network.addIntercept", {phases: ["beforeRequestSent"], contexts: [ctx]}, s)?
-  blocked(e) = dict.GetOr("isBlocked", false, e) and dict.GetOr("context", "", e) == ctx and matches(pattern, dict.GetOr("url", "", dict.GetOr("request", {}, e)))
+  blocked(e) = dict.GetOr("isBlocked", false, e) == true and dict.GetOr("context", "", e) == ctx and matches(pattern, dict.GetOr("url", "", requestOf(e)))
   watch(["network.beforeRequestSent"], blocked, e -> handle(e, handler, s), s, once = false, only = true)?
   result.Ok(missing)
 end
@@ -100,7 +104,7 @@ defn Response(pattern, action, p, timeout = DefaultTimeout)
   s = p.session
   sub = call("session.subscribe", {events: ["network.responseCompleted", "network.fetchError"], contexts: [p.context]}, s)?.subscription
   kept = call("network.addDataCollector", {dataTypes: ["response"], maxEncodedDataSize: maxBody, contexts: [p.context]}, s)?.collector
-  test(e) = dict.GetOr("context", "", e) == p.context and matches(pattern, dict.GetOr("url", "", dict.GetOr("request", {}, e)))
+  test(e) = dict.GetOr("context", "", e) == p.context and matches(pattern, dict.GetOr("url", "", requestOf(e)))
   got = during(["network.responseCompleted", "network.fetchError"], test, action, p, timeout)
   body = if result.IsOk(got) and dict.Has("response", got.Value) call("network.getData", {dataType: "response", request: got.Value.request.request, collector: kept}, s) else got end
   _ = call("network.removeDataCollector", {collector: kept}, s)

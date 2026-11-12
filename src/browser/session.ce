@@ -142,8 +142,8 @@ defn dispatch(c, requests, gone)
             end
           end
         end
-        if method == "network.beforeRequestSent" and dict.GetOr("isBlocked", false, e) and not owned
-          fiber.Spawn(() -> call("network.continueRequest", {request: dict.GetOr("request", {}, dict.GetOr("request", {}, e))}, s))
+        if method == "network.beforeRequestSent" and dict.GetOr("isBlocked", false, e) == true and not owned
+          fiber.Spawn(() -> call("network.continueRequest", {request: dict.GetOr("request", "", requestOf(e))}, s))
         else if method == "log.entryAdded"
           source = dict.GetOr("source", {}, e)
           uc = if value.IsDict(source) dict.GetOr("userContext", "default", source) else "default" end
@@ -168,6 +168,10 @@ defn dispatch(c, requests, gone)
   end
   _ = websocket.Close(c)
 end
+
+(* The request of a network event, a dictionary, or {} for a message that holds none: the tests of the watches, which
+   the dispatcher runs, read the events with it and with dict.GetOr, compare with ==, and never panic. *)
+requestOf(e) = if value.IsDict(dict.GetOr("request", missing, e)) e.request else {} end
 
 kept(entries) = if value.Len(entries) > consoleEntries list.Skip(1, entries) else entries end   (* The last entries. *)
 

@@ -118,7 +118,7 @@ defn isPatterns()
     matches("http://127.0.0.1:8080/api/items?page=2", u), matches("http://127.0.0.1:*/api/*", u),
     not matches("/api", u), not matches("/api/items?page=2", u), not matches("/api/item", u),
     not matches("https://127.0.0.1:8080/*", u), matches("/a.b(c)", "http://x/a.b(c)"), not matches("/a.b", "http://x/aXb"),
-    matches("/", "http://x"), matches("/", "http://x/#top")])
+    matches("/", "http://x"), matches("/", "http://x/#top"), not matches("*", 5), not matches("*", missing)])
 end
 
 defn isTabsAndPopups()
@@ -170,5 +170,7 @@ defn isUntrustedMessages()
     value.Equal(answer({}).Error, {Kind: "browser", Code: "unknown error", Message: ""}),
     value.Equal(answer({type: "success"}).Value, {}),
     value.Equal(entry({}), {Type: "log", Text: ""}),
-    value.Equal(entry({type: "javascript", text: 3}), {Type: "exception", Text: ""})])
+    value.Equal(entry({type: "javascript", text: 3}), {Type: "exception", Text: ""}),
+    value.Equal(requestOf({request: 5}), {}),
+    value.Equal(requestOf({request: {url: "u"}}), {url: "u"})])
 end
