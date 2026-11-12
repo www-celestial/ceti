@@ -11,6 +11,7 @@ use std/dict
 use std/fiber
 use std/list
 use std/math
+use std/regex
 use std/result
 use std/sys
 use std/text
@@ -27,10 +28,14 @@ defn Firefox(f, dir, headless = true, program = "firefox")
   (** Starts Firefox on a new profile in the folder dir, calls f(b) with the browser b, then closes Firefox and removes
       its profile, whatever f gives, an Ok, an Err or a panic: it gives what f gave, or panics again if f panicked. As
       sql.Transaction does, it runs in a fiber of its own, so that a caller stopped by fiber.Cancel leaves no Firefox
-      behind. headless = false shows the window, to look at a problem. program is the command of Firefox, as
+      behind. The profile is a copy of the template that dir keeps for this version of Firefox: the profile of a Firefox
+      started once and closed before any page, made at the first start in dir and again when the version changes, and
+      never changed by a run, so that no run sees what another one did. A folder kept between runs, as .cesia/firefox,
+      gets Firefox ready in about 0.9 s instead of 2 s; the first start in it takes about 2.6 s more. headless = false
+      shows the window, to look at a problem. program is the command of Firefox, as
       /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An Err of the kind "browser" when Firefox can't start,
       or doesn't end once closed. It needs exec= for program, net=127.0.0.1 for the port Firefox chooses, and read= and
-      write= for dir, where the profile is made and removed. *)
+      write= for dir, where the template and the profiles are made and the profiles removed. *)
   rethrow(result.Unwrap(fiber.Wait(fiber.Spawn(() -> whole(f, dir, headless, program)))))
 end
 
@@ -39,7 +44,7 @@ rethrow(out) = if isPanic(out) bug.Panic(out.Panic) else out end
 
 defn whole(f, dir, headless, program)
   (** Firefox(f, dir): what f gave, or a {Panic} of its message. *)
-  profile = newProfile(dir)?
+  profile = newProfile(dir, program)?
   started = launch(program, headless, profile)
   if result.IsErr(started)
     _ = removeTree(profile)
@@ -73,17 +78,117 @@ failed(r) = match r
   else -> false
 end
 
-defn newProfile(dir)
-  (** A new empty folder in dir, for the profile of one Firefox: profile- and the time in microseconds, which no other
-      folder of dir has. *)
+defn newProfile(dir, program)
+  (** A new profile in dir for one Firefox: a copy of the template of dir for this version of Firefox. *)
+  model = template(dir, program)?
+  p = newFolder(dir, "profile")?
+  copied = copyTree(model, p)
+  if result.IsErr(copied)
+    _ = removeTree(p)
+    return copied
+  end
+  result.Ok(p)
+end
+
+defn newFolder(dir, kind)
+  (** A new empty folder in dir: kind, a dash and the time in microseconds, which no other folder of dir has. *)
   sys.Mkdir(dir)?
   n = math.Div(sys.Now() * 1000000, 1)
-  while sys.Exists("$dir/profile-$n")
+  while sys.Exists("$dir/$kind-$n")
     n += 1
   end
-  p = "$dir/profile-$n"
+  p = "$dir/$kind-$n"
   sys.Mkdir(p)?
   result.Ok(p)
+end
+
+defn template(dir, program)
+  (** The template of dir for the version of this Firefox, template- and that version: an Ok of its folder, made first
+      when dir has none. It is made in a folder of its own, then renamed at once, so that a copy never meets one half
+      made: when another Firefox made it meanwhile, its own goes. The templates of other versions then go, as no
+      Firefox starts on a profile of a later version than its own, and an earlier one only after work that the template
+      saves. *)
+  key = version(program)?
+  kept = "$dir/template-$key"
+  if sys.Exists(kept)
+    return result.Ok(kept)
+  end
+  build = newFolder(dir, "build")?
+  made = firstStart(program, build)
+  if result.IsErr(made) or result.IsErr(sys.Rename(build, kept))
+    _ = removeTree(build)
+    if result.IsErr(made)
+      return made
+    end
+  end
+  for name in sys.List(dir)?
+    if text.StartsWith("template-", name) and name != "template-$key"
+      _ = removeTree("$dir/$name")
+    end
+  end
+  result.Ok(kept)
+end
+
+defn version(program)
+  (** The version of a Firefox and its build, as firefox --full-version writes them, "Mozilla Firefox 159.0
+      20261027034604 20261027034604": its words that hold a digit, joined by dashes, as 159.0-20261027034604-20261027034604.
+      Firefox itself starts on a profile as one of a new version when one of them changes. *)
+  ran = sys.Run(program, args = ["--full-version"])
+  if result.IsErr(ran)
+    return result.Err({Kind: "browser", Message: "$program didn't start: $(ran.Error.Message)"})
+  end
+  words = [w for w in text.Split(" ", text.Trim(ran.Value.Out)) if regex.Test("^[0-9A-Za-z.]*[0-9][0-9A-Za-z.]*$", w)]
+  if ran.Value.Code != 0 or value.Len(words) == 0
+    return result.Err({Kind: "browser", Message: "$program --full-version gave no version: $(text.Trim("$(ran.Value.Out) $(ran.Value.Err)"))"})
+  end
+  result.Ok(text.Join("-", words))
+end
+
+(* What the first start of a template leaves that is its own, and that no later start needs: its lock, its HTTP cache,
+   its telemetry, its crash reports, its session, and the list of files that the startup cache read, which names them
+   by the path of the build. *)
+leftovers = ["lock", "cache2", "crashes", "minidumps", "datareporting", "saved-telemetry-pings", "sessionstore.jsonlz4",
+  "sessionstore-backups", "sessionCheckpoints.json", "thumbnails", "bookmarkbackups"]
+
+defn firstStart(program, profile)
+  (** Starts Firefox once on an empty profile, headless, and closes it before any page: the template's work, done once.
+      Ok(missing) once Firefox ended by itself with the code 0, with its leftovers removed, or an Err. *)
+  fx = launch(program, true, profile)?
+  opened = connect(fx.Url)
+  if result.IsErr(opened)
+    _ = quit(missing, fx)
+    return opened
+  end
+  code = quit(opened.Value, fx)?
+  if code != 0
+    return result.Err({Kind: "browser", Message: "Firefox ended with $(if value.IsMissing(code) "a TERM signal" else "the code $code" end) once closed, on its first start in $profile: no template is kept."})
+  end
+  for name in sys.List(profile)?
+    if name in leftovers
+      removeTree("$profile/$name")?
+    end
+  end
+  if sys.Exists("$profile/startupCache/urlCache.bin")
+    sys.Remove("$profile/startupCache/urlCache.bin")?
+  end
+  result.Ok(missing)
+end
+
+defn copyTree(from, to)
+  (** Copies the files of a folder into another, at any depth: Ok(missing), or the first Err. A link is no part of a
+      profile once Firefox has ended, so it is left out. *)
+  for name in sys.List(from)?
+    s = sys.Stat("$from/$name")
+    if result.IsErr(s) or s.Value.IsLink
+      (* a link, or one that leads nowhere *)
+    else if s.Value.IsDir
+      sys.Mkdir("$to/$name")?
+      copyTree("$from/$name", "$to/$name")?
+    else
+      sys.Write("$to/$name", sys.Read("$from/$name")?)?
+    end
+  end
+  result.Ok(missing)
 end
 
 defn launch(program, headless, profile)
@@ -166,23 +271,29 @@ end
 defn quit(b, fx)
   (** Closes Firefox: browser.close when the session is open, else the TERM signal; then up to quitTime seconds for its
       output to end, which comes when it and the processes it started have ended, and its exit. If it still runs, the
-      TERM signal and as long again. Ok(missing) once it has ended, or an Err of the kind "browser" if it still runs. *)
-  if value.IsMissing(b)
+      TERM signal and as long again. Once it has ended, an Ok of its exit code, or of missing when it took a TERM
+      signal; an Err of the kind "browser" if it still runs. *)
+  stopped = value.IsMissing(b)
+  if stopped
     sys.Stop(fx.Proc)
   else
     _ = call("browser.close", {}, b, wait = quitTime)
   end
   quiet = result.IsOk(fiber.Wait(fx.Output, timeout = quitTime))
   exit = fiber.Spawn(() -> sys.WaitExit(fx.Proc))
-  over = result.IsOk(fiber.Wait(exit, timeout = if quiet 1 else 0.1 end))
-  if not over
+  ended = fiber.Wait(exit, timeout = if quiet 1 else 0.1 end)
+  if result.IsErr(ended)
     sys.Stop(fx.Proc)
-    over = result.IsOk(fiber.Wait(exit, timeout = quitTime))
+    stopped = true
+    ended = fiber.Wait(exit, timeout = quitTime)
   end
   if not value.IsMissing(b)
     hangUp(b)
   end
-  if over result.Ok(missing) else result.Err({Kind: "browser", Message: "Firefox still runs $(2 * quitTime) seconds after it was closed, and after a TERM signal."}) end
+  if result.IsErr(ended)
+    return result.Err({Kind: "browser", Message: "Firefox still runs $(2 * quitTime) seconds after it was closed, and after a TERM signal."})
+  end
+  result.Ok(if stopped missing else ended.Value end)
 end
 
 defn removeTree(path)

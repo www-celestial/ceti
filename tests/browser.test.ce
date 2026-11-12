@@ -1,16 +1,22 @@
-(* Headless Firefox against the pages of tests/pages, which each test serves itself on a free port. A test that needs
-   several scenarios runs them on one browser, each on its page, since a start of Firefox takes about two seconds. *)
+(* Headless Firefox against the pages of tests/pages, which each test serves itself on a free port. The tests start
+   Firefox in the kept folder .cesia/firefox, where the first start makes the template of this version of Firefox; they
+   run one after the other, so each one can check that its profile went. A test that needs several scenarios runs them on
+   one browser, each on its page, since a start of Firefox takes about a second. *)
 use src/browser
 use std/bug
+use std/cesia
 use std/fiber
 use std/http
 use std/list
 use std/net
+use std/regex
 use std/result
 use std/sys
 use std/test
 use std/text
 use std/value
+
+kept = ".cesia/firefox"
 
 defn served()
   (** The address of tests/pages, served by this test on a free port of this machine. *)
@@ -19,17 +25,22 @@ defn served()
   result.Ok("http://127.0.0.1:$(net.Port(l))")
 end
 
+defn others(dir)
+  (** The names in dir besides its templates: the profiles of runs that should have gone. *)
+  result.Ok([name for name in sys.List(dir)? if not text.StartsWith("template-", name)])
+end
+
 defn on(page, f)
-  (** f(p, site) on a new page at tests/pages/page, in a new Firefox, then the folder of its profile is empty again. *)
+  (** f(p, site) on a new page at tests/pages/page, in a new Firefox, then the kept folder holds its template only. *)
   site = served()?
-  dir = test.Temp()
   out = browser.Firefox(defn (b)
     p = browser.NewPage(b)?
     browser.Go("$site/$page", p)?
     f(p, site)
-  end, dir)
-  if value.Len(sys.List(dir)?) != 0
-    return result.Err("the profile is still in $dir")
+  end, kept)
+  left = others(kept)?
+  if value.Len(left) != 0
+    return result.Err("$kept still holds $left")
   end
   out
 end
@@ -167,7 +178,7 @@ defn isPagesApart()
       value.Equal(seen, [["visible", "k=1", "1"], ["visible", "", missing], ["visible", "", missing]]),
       browser.ClosePage(pages[2]).Error.Kind == "browser",
       browser.Text("h1", pages[3])? == "Form"])
-  end, test.Temp())
+  end, kept)
 end
 
 defn slowly()
@@ -179,27 +190,115 @@ defn isErrors()
   l = net.Listen(0)?
   fiber.Spawn(() -> http.Serve(http.App() then http.Get("/slow", r -> slowly()), listener = l))
   slow = "http://127.0.0.1:$(net.Port(l))/slow"
-  kept = browser.Firefox(defn (b)
+  run = browser.Firefox(defn (b)
     p = browser.NewPage(b)?
     refused = browser.Go("http://127.0.0.1:1/", p)
     late = browser.Go(slow, p, timeout = 0.3)
     result.Ok({Browser: b, Page: p, Refused: refused, Late: late})
-  end, test.Temp())?
+  end, kept)?
   list.All([
-    kept.Late.Error.Message == "$slow: not loaded after 0.3 s",
-    kept.Refused.Error.Kind == "browser",
-    kept.Refused.Error.Code == "unknown error",
-    browser.Text("h1", kept.Page).Error.Kind == "closed",
-    browser.NewPage(kept.Browser).Error.Kind == "closed"])
+    run.Late.Error.Message == "$slow: not loaded after 0.3 s",
+    run.Refused.Error.Kind == "browser",
+    run.Refused.Error.Code == "unknown error",
+    browser.Text("h1", run.Page).Error.Kind == "closed",
+    browser.NewPage(run.Browser).Error.Kind == "closed"])
 end
 
 defn isPanicCloses()
-  dir = test.Temp()
-  message = panicOf(() -> browser.Firefox(b -> bug.Panic("on purpose"), dir))
-  text.Contains("on purpose", message) and value.Len(sys.List(dir)?) == 0
+  message = panicOf(() -> browser.Firefox(b -> bug.Panic("on purpose"), kept))
+  text.Contains("on purpose", message) and value.Len(others(kept)?) == 0
 end
 
 defn isErrGivenBack()
+  value.Equal(browser.Firefox(b -> result.Err("mine"), kept), result.Err("mine")) and value.Len(others(kept)?) == 0
+end
+
+(* What a run writes and keeps: a cookie of an hour, localStorage, an IndexedDB database. *)
+writes = "document.cookie = 'kept=1; max-age=3600'; localStorage.setItem('kept', '1'); new Promise((done) => { const r = indexedDB.open('kept', 1); r.onupgradeneeded = () => r.result.createObjectStore('s'); r.onsuccess = () => { const t = r.result.transaction('s', 'readwrite'); t.objectStore('s').put(1, 'k'); t.oncomplete = () => { r.result.close(); done(true); }; }; })"
+
+(* What a page sees of them, and the text of /cached, which the HTTP cache may keep for an hour. *)
+seen = "Promise.all([document.cookie, localStorage.getItem('kept'), indexedDB.databases().then((d) => d.map((x) => x.name)), fetch('/cached').then((r) => r.text())])"
+
+defn cached(hits)
+  (** A text that the browser may keep in its HTTP cache for an hour; each request for it sends 1 on hits. *)
+  fiber.Send(1, hits)
+  http.WithHeader("cache-control", "max-age=3600", http.Plain("cached"))
+end
+
+defn drained(hits)
+  (** How many requests reached /cached since the last count. *)
+  n = 0
+  while result.IsOk(fiber.Receive(hits, timeout = 0))
+    n += 1
+  end
+  n
+end
+
+defn fingerprints(dir)
+  (** Each file of a folder, at any depth, beside the fingerprint of its bytes. *)
+  out = []
+  for p in sys.Walk(dir)?
+    out = list.Append([p, cesia.Fingerprint(sys.Read(p)?)], out)
+  end
+  result.Ok(out)
+end
+
+defn isRunsForget()
+  (** A run that writes a cookie, localStorage, IndexedDB and the HTTP cache, then a next run in the same kept folder, on
+      the same origin: the next one sees none of them and asks the server again, and the template is the same, file for
+      file and byte for byte. The first run sees what it wrote, and its HTTP cache answers the second fetch, so these
+      checks can see what a kept profile would keep. *)
+  hits = fiber.Channel(size = 100)
+  l = net.Listen(0)?
+  fiber.Spawn(() -> http.Serve(http.App() then http.Get("/cached", r -> cached(hits)) then http.Static("/", "tests/pages"), listener = l))
+  site = "http://127.0.0.1:$(net.Port(l))"
+  if value.Len(sys.List(kept)?) == 0
+    browser.Firefox(b -> result.Ok(missing), kept)?
+  end
+  model = "$kept/$(sys.List(kept)?[1])"
+  before = fingerprints(model)?
+  look(f) = browser.Firefox(defn (b)
+    p = browser.NewPage(b)?
+    browser.Go("$site/form.html", p)?
+    f(p)
+  end, kept)
+  first = look(defn (p)
+    _ = browser.Eval(writes, p)?
+    result.Ok([browser.Eval(seen, p)?, browser.Eval(seen, p)?])
+  end)?
+  firstHits = drained(hits)
+  next = look(p -> browser.Eval(seen, p))?
+  list.All([
+    value.Equal(first, [["kept=1", "1", ["kept"], "cached"], ["kept=1", "1", ["kept"], "cached"]]),
+    firstHits == 1,
+    value.Equal(next, ["", missing, [], "cached"]),
+    drained(hits) == 1,
+    value.Equal(fingerprints(model)?, before),
+    value.Equal(others(kept)?, [])])
+end
+
+defn isOneRunKeepsACookie()
+  (** A cookie of an hour, which isNextTestSeesNoCookie, the next test, must not see. *)
+  on("form.html", defn (p, site)
+    _ = browser.Eval("document.cookie = 'left=1; max-age=3600'", p)?
+    browser.Eval("document.cookie", p)? == "left=1"
+  end)
+end
+
+defn isNextTestSeesNoCookie()
+  (** After isOneRunKeepsACookie: a cookie belongs to its host, whatever the port, so this page of 127.0.0.1 would see a
+      cookie that the kept folder carried from that test to this one. *)
+  on("form.html", (p, site) -> browser.Eval("document.cookie", p)? == "")
+end
+
+defn isOneTemplatePerVersion()
+  (** Two Firefoxes that start at once in a folder that holds the template of another version: both run, one template of
+      this version stays, named by firefox --full-version, and the other version's goes. *)
   dir = test.Temp()
-  value.Equal(browser.Firefox(b -> result.Err("mine"), dir), result.Err("mine")) and value.Len(sys.List(dir)?) == 0
+  sys.Mkdir("$dir/template-1.0-1")?
+  sys.Write("$dir/template-1.0-1/prefs.js", "")?
+  ran = fiber.Pmap(k -> browser.Firefox(b -> result.Ok(k), dir), [1, 2])
+  full = sys.Run("firefox", args = ["--full-version"])?.Out
+  words = [w for w in text.Split(" ", text.Trim(full)) if regex.Test("[0-9]", w)]
+  value.Equal(ran, [result.Ok(1), result.Ok(2)]) and value.Equal(sys.List(dir)?, ["template-$(text.Join("-", words))"])
 end

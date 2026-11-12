@@ -2,9 +2,10 @@
 name = "ceti"
 cesia = "1.1"
 
-# The tests start Firefox, which listens on a port it chooses on 127.0.0.1, and serve their pages themselves.
+# The tests start Firefox, which listens on a port it chooses on 127.0.0.1, and serve their pages themselves. Firefox
+# keeps the template of its profiles in .cesia/firefox, from one run of the tests to the next.
 [test]
-allow = ["exec=firefox", "net=127.0.0.1"]
+allow = ["exec=firefox", "net=127.0.0.1", "write=.cesia/firefox"]
 timeout = "30"
 
 # cesia doc --site, through tools/site.sh: the site of Ceti, its book and the reference of its package.
