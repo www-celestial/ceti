@@ -1,0 +1,51 @@
+name: ci
+
+# The tests of Ceti on Ubuntu, where the runner image already has Firefox: Cesia 1.1.0, the first Cesia with the
+# WebSocket client, then cesia check, and cesia test on both paths, each test starting a headless Firefox against the pages
+# of tests/pages. A Firefox still running after them fails the job.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CESIA_VERSION: v1.1.0
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Cesia
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive=cesia-linux-x86_64.tar.gz
+          gh release download "$CESIA_VERSION" --repo www-celestial/cesia-lang --pattern "$archive*" --dir download
+          (cd download && [ "$(sha256sum "$archive" | cut -d' ' -f1)" = "$(cut -d' ' -f1 < "$archive.sha256")" ])
+          mkdir -p "$HOME/.cesia"
+          tar -xzf "download/$archive" -C "$HOME/.cesia"
+          echo "$HOME/.cesia/bin" >> "$GITHUB_PATH"
+      - name: Versions
+        run: |
+          cesia version
+          firefox --version
+      - run: cesia check
+      - run: cesia test
+      - run: cesia test --no-spec
+      - name: No Firefox left
+        if: always()
+        run: |
+          if pgrep -a firefox; then
+            echo "A Firefox outlived the tests."
+            exit 1
+          fi
