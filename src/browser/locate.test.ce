@@ -180,3 +180,15 @@ defn isHereOf()
     value.IsMissing(hereOf(missing, "work/profile-1")),
     value.IsMissing(hereOf("/elsewhere/profile-1", "work/profile-1"))])
 end
+defn isPointer()
+  at("pointer.html", defn (p)
+    Hover("#menu", p)?
+    tip = Text("#tip", p, timeout = 1)?
+    Drag(ByText("Task 1"), ByText("Task 3"), p)?
+    order = Text("#said", p)?
+    Wheel("#box", 300, p)?
+    inside = Eval("document.getElementById('box').scrollTop", p)?
+    Wheel("h1", 500, p)?
+    list.All([tip == "A tip", order == "Task 2, Task 3, Task 1", inside == 300, Eval("scrollY", p)? == 500])
+  end)
+end

@@ -85,7 +85,7 @@ defn newProfile(dir, program)
       template-Mozilla-Firefox-159.0-20261027034604-20261027034604, since Firefox refuses a profile of a later version
       than its own, and does its first-start work again on one of an earlier version. It is made in a folder of its
       own, then renamed at once, so that a copy never meets one half made: when another Firefox made it meanwhile, its
-      own goes. The templates of other versions then go. *)
+      own goes. The templates of other versions then go. The copy gets the preferences of prefs. *)
   ran = sys.Run(program, args = ["--full-version"])
   if result.IsErr(ran) or ran.Value.Code != 0
     return result.Err({Kind: "browser", Message: "$program --full-version gave no version."})
@@ -109,12 +109,17 @@ defn newProfile(dir, program)
   end
   p = newFolder(dir, "profile")?
   copied = copyTree(model, p)
+  copied = if result.IsOk(copied) sys.Write("$p/user.js", prefs) else copied end
   if result.IsErr(copied)
     _ = removeTree(p)
     return copied
   end
   result.Ok(p)
 end
+
+(* The preferences that each profile gets in its user.js, which Firefox reads at its start: a turn of the wheel scrolls
+   at once, as a test needs, rather than over half a second. *)
+prefs = "user_pref(\"general.smoothScroll\", false);\n"
 
 defn newFolder(dir, kind)
   (** A new empty folder in dir: kind, a dash and the time in microseconds, which no other folder of dir has. *)

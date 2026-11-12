@@ -336,6 +336,34 @@ Firefox needs absolute paths, and Cesia gives no current folder, so Ceti learns 
 profile, less the relative one Ceti gave it. A relative path is so taken from the current folder when the folder given to
 `browser.Firefox` is relative, as `.cesia/firefox`; with an absolute one, as `test.Temp()`, give absolute paths.
 
+## The mouse and the wheel
+
+Beside `Click`, three functions move the mouse of BiDi, whose events are the browser's own:
+
+- `browser.Hover(sel, p)` moves the mouse to the centre of the element, as a person points at it: the page gets
+  `mouseover`, `mouseenter` and `mousemove`, and a menu that opens under the mouse opens.
+- `browser.Drag(from, to, p)` presses the mouse on the centre of `from`, moves it in small steps to the centre of `to`,
+  and releases it there: what lists sorted by hand, sliders and maps listen to, with the events of the mouse and the
+  pointer.
+- `browser.Wheel(sel, dy, p)` turns the wheel over the element by `dy` pixels, down when `dy` is positive and up when
+  it is negative: the element, or the page around it, scrolls as for a person.
+
+```cesia norun
+defn sort(p)
+  browser.Drag(browser.ByText("Task 3"), browser.ByText("Task 1"), p)?
+  browser.Wheel("#feed", 2000, p)
+end
+```
+
+Firefox scrolls for the wheel on a thread of its own, and the page learns it a frame or two later, so `Wheel` answers
+once the page has seen a scroll, or after six frames when nothing could scroll. Each profile turns off smooth
+scrolling (`general.smoothScroll` in its `user.js`): a turn of the wheel scrolls at once, as a test needs, rather than
+over half a second.
+
+**The drag and drop of HTML**, an element `draggable="true"` and the event `drop`, doesn't end in Firefox 160 headless:
+`dragstart`, `dragenter` and `dragover` come, never `drop` nor `dragend`, whatever the order of the moves. Ceti doesn't
+make those events itself in JavaScript, as they wouldn't be the browser's: such a test waits for Firefox.
+
 ## Reading the page
 
 `browser.Text` gives the text of the first visible element of a selector, once there is one: its `innerText`, the text

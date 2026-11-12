@@ -12,7 +12,8 @@
      "texts"    the innerText of every element of q, at once, with no wait
      "click"    scrolls the element to the middle of the viewport if its centre is out of it, and gives the element
      "point"    the same, for an element that may be disabled
-     "wheel"    the same, but scrolls only an element that is wholly out of the viewport
+     "wheel"    scrolls only an element that is wholly out of the viewport, and gives {x, y}, the centre of its part
+                in view, in pixels of the viewport
      "node"     the element, where it is
      "type"     scrolls it, gives it the focus and selects what it holds: {ok: true}; for an input of a type that takes
                 no keys, as date, it sets the value to arg and sends input and change: {set: true}
@@ -126,7 +127,13 @@ seekJs = "(q, mode, ms, arg) => {
   const use = (e) => {
     if (mode === 'show') return {ok: true};
     if (mode === 'text') return {text: e.innerText};
-    if (mode === 'click' || mode === 'point' || mode === 'wheel') { bring(e, mode === 'wheel'); return e; }
+    if (mode === 'click' || mode === 'point') { bring(e, false); return e; }
+    if (mode === 'wheel') {
+      bring(e, true);
+      const b = e.getBoundingClientRect();
+      const left = Math.max(b.left, 0), top = Math.max(b.top, 0);
+      return {x: Math.floor((left + Math.min(b.right, innerWidth)) / 2), y: Math.floor((top + Math.min(b.bottom, innerHeight)) / 2)};
+    }
     if (mode === 'node') return e;
     if (mode === 'value') {
       if (e instanceof HTMLSelectElement) return {value: e.multiple ? [...e.selectedOptions].map((o) => o.label) : e.selectedOptions.length ? e.selectedOptions[0].label : null};
@@ -212,3 +219,13 @@ seekJs = "(q, mode, ms, arg) => {
     frame = requestAnimationFrame(look);
   });
 }"
+
+(* A promise that ends at the first scroll of the page or of one of its elements, or after six frames: Firefox scrolls
+   for the wheel on a thread of its own, and the page sees it a frame or two later. *)
+scrolledJs = "() => new Promise((done) => {
+  let frames = 0;
+  const end = () => { removeEventListener('scroll', end, true); done(true); };
+  addEventListener('scroll', end, true);
+  const tick = () => { if (++frames >= 6) end(); else requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+})"

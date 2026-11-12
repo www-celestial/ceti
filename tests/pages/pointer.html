@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Pointer</title>
+<style>body { font: 16px sans-serif; margin: 2em } li { padding: 8px; margin: 4px; background: #ddd; width: 200px; user-select: none }
+#box { height: 100px; overflow: auto; border: 1px solid } #tip { visibility: hidden }</style></head>
+<body>
+<h1>Pointer</h1>
+<button id="menu">Menu</button><span id="tip">A tip</span>
+<ul id="list"><li>Task 1</li><li>Task 2</li><li>Task 3</li></ul>
+<div id="box"><div style="height: 1000px">inside</div></div>
+<p id="said"></p>
+<div style="height: 3000px"></div>
+<script>
+document.getElementById('menu').addEventListener('mouseenter', () => { document.getElementById('tip').style.visibility = 'visible'; });
+let held = null;
+const list = document.getElementById('list');
+list.addEventListener('mousedown', (e) => { held = e.target.closest('li'); });
+addEventListener('mouseup', (e) => {
+  const at = document.elementFromPoint(e.clientX, e.clientY);
+  const over = at && at.closest('li');
+  if (held && over && over !== held) list.insertBefore(held, over.nextSibling);
+  held = null;
+  document.getElementById('said').textContent = [...list.children].map((li) => li.textContent).join(', ');
+});
+</script>
+</body>
+</html>
