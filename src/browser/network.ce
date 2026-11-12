@@ -1,0 +1,116 @@
+(* The network of a page: the routes that answer, let go on or block its requests, and the responses it waits for.
+   BiDi has URL patterns, but Firefox 160 departs from the spec (a pattern of a path doesn't match it with a query, one
+   of a host matched nothing, * is refused), so Ceti intercepts the page's requests and compares their URLs itself. *)
+use std/bug
+use std/dict
+use std/encode
+use std/fiber
+use std/json
+use std/regex
+use std/result
+use std/text
+use std/value
+
+(* The largest body that Response keeps, in bytes. *)
+maxBody = 16777216
+
+defn matches(pattern, url)
+  (** Does a pattern of Route or Response match a URL? A pattern that starts with / is matched against the path of the
+      URL, without its query; another against the whole URL. * stands for any run of characters.
+
+        matches("/api/*", "http://127.0.0.1:8080/api/items?page=2") --> true *)
+  target = if text.StartsWith("/", pattern) pathOf(url) else url end
+  quoted = [text.Join("", [if text.Contains(c, specials) "\\$c" else c end for c in text.Chars(part)]) for part in text.Split("*", pattern)]
+  regex.Test("^$(text.Join(".*", quoted))$(text.Char(36))", target)
+end
+
+(* The characters that a regular expression gives a meaning of its own. *)
+specials = "\\.+?^[]{}|()$(text.Char(36))"
+
+defn pathOf(url)
+  (** The path of a URL, without its origin, its query and its fragment. *)
+  after = text.Find("://", url)
+  rest = if value.IsMissing(after) url else text.Slice(after + 3, value.Len(url), url) end
+  slash = text.Find("/", rest)
+  if value.IsMissing(slash)
+    return "/"
+  end
+  p = text.Slice(slash, value.Len(rest), rest)
+  for mark in ["?", "#"]
+    cut = text.Find(mark, p)
+    p = if value.IsMissing(cut) p else text.Slice(1, cut - 1, p) end
+  end
+  p
+end
+
+headersOf(hs) = dict.Dict([{Key: text.Lower(h.name), Value: dict.GetOr("value", "", h.value)} for h in hs])   (* BiDi's headers as a dictionary. *)
+
+defn bytesOf(body)
+  (** A text of bytes as a BytesValue of BiDi: a string when it is UTF-8, else Base64. *)
+  if text.Contains(text.Char(65533), json.Text(body)) and not text.Contains(text.Char(65533), body)
+    return {type: "base64", value: encode.Base64(body)}
+  end
+  {type: "string", value: body}
+end
+
+defn Route(pattern, handler, p)
+  (** Sends each request of the page that the pattern matches to handler(request), request being {Url, Method,
+      Headers}, Headers a dictionary of lower-case names. As an HTTP handler of std/http does, the handler gives a
+      response {Status, Body, Headers}, each one optional (200, "", none), which the page gets instead of the network's;
+      or missing, and the request goes on to the network as it was; or an Err, and the request fails, as with no
+      network. A pattern that starts with / is matched against the path of the URL, on any origin and without the
+      query, as "/api/items"; another against the whole URL, as "https://cdn.example.com/lib.js"; * stands for any run
+      of characters, as "/api/*". The routes of a page last as long as it does, and the last one given that matches a
+      request handles it. Each request of a page that has a route waits for Ceti, about a round trip. A handler that
+      panics fails its request, and its panic is printed, as a fiber's is. Ok(missing), or an Err. *)
+  ctx = p.context
+  s = p.session
+  call("session.subscribe", {events: ["network.beforeRequestSent"], contexts: [ctx]}, s)?
+  call("network.addIntercept", {phases: ["beforeRequestSent"], contexts: [ctx]}, s)?
+  blocked(e) = dict.GetOr("isBlocked", false, e) and dict.GetOr("context", "", e) == ctx and matches(pattern, dict.GetOr("url", "", dict.GetOr("request", {}, e)))
+  watch(["network.beforeRequestSent"], blocked, e -> handle(e, handler, s), s, once = false, only = true)?
+  result.Ok(missing)
+end
+
+defn handle(e, handler, s)
+  (** Hands a blocked request to the handler of its route, and then to Firefox as the handler says. *)
+  r = e.request
+  out = fiber.Wait(fiber.Spawn(() -> handler({Url: r.url, Method: r.method, Headers: headersOf(r.headers)})))
+  if result.IsErr(out)
+    _ = call("network.failRequest", {request: r.request}, s)
+    bug.Panic("The handler of a route for $(r.url) panicked: $(out.Error.Message) ($(out.Error.File):$(out.Error.Line))")
+  end
+  answer = out.Value
+  if value.IsMissing(answer)
+    return call("network.continueRequest", {request: r.request}, s)
+  end
+  if failed(answer)
+    return call("network.failRequest", {request: r.request}, s)
+  end
+  given = dict.GetOr("Headers", {}, answer)
+  headers = [{name: k, value: {type: "string", value: given[k]}} for k in dict.Keys(given)]
+  call("network.provideResponse", {request: r.request, statusCode: dict.GetOr("Status", 200, answer), headers: headers, body: bytesOf(dict.GetOr("Body", "", answer))}, s)
+end
+
+defn Response(pattern, action, p, timeout = DefaultTimeout)
+  (** Runs action() and gives the first response to a request of the page whose URL the pattern matches, as Route
+      matches them, once it is complete: an Ok of {Url, Method, Status, Headers, Body}, Body the bytes as a text, or
+      missing when it is larger than 16 MiB. An Err of the kind "timeout" when no such response came within timeout
+      seconds after the action, of the kind "browser" when the request failed, or the action's Err. *)
+  s = p.session
+  sub = call("session.subscribe", {events: ["network.responseCompleted", "network.fetchError"], contexts: [p.context]}, s)?.subscription
+  kept = call("network.addDataCollector", {dataTypes: ["response"], maxEncodedDataSize: maxBody, contexts: [p.context]}, s)?.collector
+  test(e) = dict.GetOr("context", "", e) == p.context and matches(pattern, dict.GetOr("url", "", dict.GetOr("request", {}, e)))
+  got = during(["network.responseCompleted", "network.fetchError"], test, action, p, timeout)
+  body = if result.IsOk(got) and dict.Has("response", got.Value) call("network.getData", {dataType: "response", request: got.Value.request.request, collector: kept}, s) else got end
+  _ = call("network.removeDataCollector", {collector: kept}, s)
+  _ = call("session.unsubscribe", {subscriptions: [sub]}, s)
+  e = got?
+  r = e.request
+  if not dict.Has("response", e)
+    return result.Err({Kind: "browser", Message: "$(r.url): $(dict.GetOr("errorText", "the request failed", e))"})
+  end
+  data = if result.IsOk(body) body.Value.bytes else missing end
+  bytes = if value.IsMissing(data) missing else if data.type == "base64" encode.Unbase64(data.value)? else data.value end
+  result.Ok({Url: r.url, Method: r.method, Status: e.response.status, Headers: headersOf(e.response.headers), Body: bytes})
+end

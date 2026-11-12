@@ -77,3 +77,46 @@ defn isConsole()
       value.Len(flood[1000].Text) == 16384])
   end)
 end
+
+defn isRoutes()
+  on(defn (p, hits)
+    Route("/api/items", r -> {Status: 200, Body: json.Text(["mocked", r.Method]), Headers: {"content-type": "application/json"}}, p)?
+    Route("https://ping.invalid/*", r -> result.Err("blocked"), p)?
+    Click("#load", p)?
+    WaitFor("li", p)?
+    mocked = Texts("li", p)?
+    Click("#ping", p)?
+    ping = Text("#said", p, timeout = 1)?
+    Route("/api/*", r -> missing, p)?
+    Click("#load", p)?
+    WaitFor(ByText("real"), p)?
+    list.All([
+      value.Equal(mocked, ["mocked", "GET"]),
+      ping == "no ping",
+      fiber.Receive(hits, timeout = 1)? == "items",
+      result.IsErr(fiber.Receive(hits, timeout = 0))])
+  end)
+end
+
+defn isResponse()
+  on(defn (p, hits)
+    r = Response("/api/save", () -> Click("#save", p), p)?
+    items = Response("/api/items", () -> Click("#load", p), p)?
+    list.All([
+      r.Status == 200 and r.Method == "POST" and r.Body == "for real",
+      text.EndsWith("/api/items?page=1", items.Url) and items.Body == "[\"real\"]",
+      text.StartsWith("application/json", items.Headers["content-type"]),
+      Response("/nothing", () -> Click("h1", p), p, timeout = 0.2).Error.Kind == "timeout"])
+  end)
+end
+
+defn isPatterns()
+  (** The patterns of Route and Response: a path on any origin without the query, or a whole URL; * any run. *)
+  u = "http://127.0.0.1:8080/api/items?page=2"
+  list.All([
+    matches("/api/items", u), matches("/api/*", u), matches("/*/items", u), matches("*", u),
+    matches("http://127.0.0.1:8080/api/items?page=2", u), matches("http://127.0.0.1:*/api/*", u),
+    not matches("/api", u), not matches("/api/items?page=2", u), not matches("/api/item", u),
+    not matches("https://127.0.0.1:8080/*", u), matches("/a.b(c)", "http://x/a.b(c)"), not matches("/a.b", "http://x/aXb"),
+    matches("/", "http://x"), matches("/", "http://x/#top")])
+end

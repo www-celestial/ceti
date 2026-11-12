@@ -356,6 +356,48 @@ end
 It keeps the last 1,000 entries of a user context, each cut to its first 16,384 characters, so that a page that logs
 without end can't fill the program's memory. It asks Firefox nothing: Ceti keeps the entries as they come.
 
+### The network
+
+`browser.Route(pattern, handler, p)` sends each request of the page whose URL the pattern matches to
+`handler(request)`, `request` being `{Url, Method, Headers}`, `Headers` a dictionary of lower-case names. As a handler
+of `std/http` does, the handler gives a response, `{Status, Body, Headers}`, each one optional (200, an empty body, no
+header), which the page gets instead of the network's; `missing`, and the request goes on to the network as it was; or
+an `Err`, and the request fails, as with no network:
+
+```cesia norun
+use std/json
+use std/result
+
+defn offline(p)
+  browser.Route("/api/items", r -> {Status: 200, Body: json.Text([]), Headers: {"content-type": "application/json"}}, p)?
+  browser.Route("https://analytics.example.com/*", r -> result.Err("blocked"), p)
+end
+```
+
+A **pattern** that starts with `/` is matched against the path of the URL, on any origin and without the query:
+`/api/items` matches `http://127.0.0.1:8080/api/items?page=2`. Another pattern is matched against the whole URL, as
+`https://cdn.example.com/lib.js`. `*` stands for any run of characters: `/api/*`, `https://cdn.example.com/*`. The routes
+of a page last as long as it does; when several match a request, the last one given handles it, so a test can make one
+answer differ for a while. A route sees the requests of its page, not those of the page's frames or popups.
+
+Each request of a page that has a route waits for Ceti, about one round trip, before it goes on: BiDi has patterns of
+its own, which Firefox would match without asking Ceti, but Firefox 160 departs from the standard there (a pattern of a
+path doesn't match it with a query, one of a host matched nothing), so Ceti asks for every request of the page and
+matches it itself. A handler that panics makes its request fail, and its panic is printed, as a fiber's is.
+
+`browser.Response(pattern, action, p)` runs `action()` and gives the first response of the page whose URL the pattern
+matches, once it is complete: `{Url, Method, Status, Headers, Body}`, `Body` the bytes as a text, or `missing` when they
+pass 16 MiB:
+
+```cesia norun
+defn save(p)
+  r = browser.Response("/api/save", () -> browser.Click(browser.ByRole("button", name = "Save"), p), p)?
+  r.Status == 201
+end
+```
+
+A request that fails, as one that no server answers, is an `Err` of the kind `"browser"`.
+
 ## Screenshots
 
 `browser.Screenshot` gives the bytes of a PNG image of the viewport, or of the whole page with `full = true`. The bytes are
