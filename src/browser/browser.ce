@@ -118,8 +118,17 @@ defn newProfile(dir, program)
 end
 
 (* The preferences that each profile gets in its user.js, which Firefox reads at its start: a turn of the wheel scrolls
-   at once, as a test needs, rather than over half a second. *)
-prefs = "user_pref(\"general.smoothScroll\", false);\n"
+   at once, as a test needs, rather than over half a second; and a page that asks for its position gets the one that
+   Emulate gave, with no question that no one would answer, or else an error at once: never the machine's own place,
+   which Firefox would ask of a network service or of GeoClue. *)
+prefs = "user_pref(\"general.smoothScroll\", false);
+user_pref(\"geo.prompt.testing\", true);
+user_pref(\"geo.prompt.testing.allow\", true);
+user_pref(\"geo.provider.network.url\", \"\");
+user_pref(\"geo.provider.use_geoclue\", false);
+user_pref(\"geo.provider.use_corelocation\", false);
+user_pref(\"geo.provider.use_gpsd\", false);
+"
 
 defn newFolder(dir, kind)
   (** A new empty folder in dir: kind, a dash and the time in microseconds, which no other folder of dir has. *)

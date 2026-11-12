@@ -138,6 +138,32 @@ of another origin than the page's. To write it, Ceti opens an empty page of that
 server sees the request, then leaves the new page on `about:blank`. An origin that isn't `http:` or `https:` is refused.
 The file of a state holds what a signed-in person holds: keep it out of git, as in `.cesia/`.
 
+### Emulation
+
+`browser.Emulate(p, ...)` makes the browser present itself otherwise to `p` and to the pages of its user context, its
+tabs and popups, until another `Emulate` changes it. It takes what it is given, each one a command of BiDi:
+
+| Parameter | What the page sees | Example |
+|---|---|---|
+| `viewport = [width, height]` | the size of its viewport, in CSS pixels | `[390, 844]` |
+| `scale = n` | the device pixel ratio, how many pixels of the screen a CSS pixel takes | `3` |
+| `locale = text` | the language, in `navigator.language` and `Intl` | `"fr-FR"` |
+| `timezone = text` | the time zone of its dates | `"Europe/Paris"` |
+| `geolocation = [latitude, longitude]` | the place that `navigator.geolocation` gives | `[48.8566, 2.3522]` |
+| `offline = true` | a network that is off; `false` puts it back | `true` |
+
+```cesia norun
+defn asPhone(p)
+  browser.Emulate(p, viewport = [390, 844], scale = 3, locale = "fr-FR", timezone = "Europe/Paris")?
+  browser.Go("http://127.0.0.1:8080/", p)
+end
+```
+
+A page that asks for its position gets the one `Emulate` gave, with no question. Without one, it gets an error at once:
+each profile turns off Firefox's ways to learn the machine's own place, a network service and GeoClue, so no page learns
+where the machine is. A time zone or a language that Firefox doesn't know is an `Err` of the kind `"browser"`. A touch
+screen isn't there: Firefox 160 has no `emulation.setTouchOverride`.
+
 ### Tabs and popups
 
 `browser.NewTab(p)` opens a page in the user context of `p`: it shares its cookies and its storage, as a second tab of

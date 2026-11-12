@@ -74,3 +74,29 @@ defn isState()
       NewPage(b, state = {Cookies: [], Storage: {"file:///etc": {}}}).Error.Kind == "browser"])
   end, kept)
 end
+
+(* The place that a page gets, or the code of its error. *)
+geo = "new Promise((r) => navigator.geolocation.getCurrentPosition((x) => r([x.coords.latitude, x.coords.longitude]), (e) => r('error ' + e.code), {timeout: 3000}))"
+online = "fetch('/form.html').then(() => 'online', () => 'offline')"
+
+defn isEmulate()
+  page("form.html", defn (p, site)
+    Emulate(p, viewport = [390, 844], scale = 3, locale = "fr-FR", timezone = "Asia/Tokyo")?
+    seen = Eval("[innerWidth, innerHeight, devicePixelRatio, navigator.language, Intl.NumberFormat().resolvedOptions().locale, Intl.DateTimeFormat().resolvedOptions().timeZone, new Date(0).getHours()]", p)?
+    nowhere = Eval(geo, p)?
+    Emulate(p, geolocation = [48.8566, 2.3522])?
+    here = Eval(geo, p)?
+    Emulate(p, offline = true)?
+    off = Eval(online, p)?
+    Emulate(p, offline = false)?
+    tab = NewTab(p)?
+    Go("$site/form.html", tab)?
+    list.All([
+      value.Equal(seen, [390, 844, 3, "fr-FR", "fr-FR", "Asia/Tokyo", 9]),
+      nowhere == "error 2",
+      value.Equal(here, [48.8566, 2.3522]),
+      off == "offline" and Eval(online, p)? == "online",
+      value.Equal(Eval("[innerWidth, Intl.DateTimeFormat().resolvedOptions().timeZone]", tab)?, [390, "Asia/Tokyo"]),
+      Emulate(p, timezone = "Mars/Olympus").Error.Kind == "browser"])
+  end)
+end
