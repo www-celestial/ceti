@@ -6,3 +6,9 @@ cesia = "1.1"
 [test]
 allow = ["exec=firefox", "net=127.0.0.1"]
 timeout = "30"
+
+# cesia doc --site, through tools/site.sh: the site of Ceti, its book and the reference of its package.
+[site]
+title = "Ceti"
+source = "https://github.com/www-celestial/ceti/blob/main/"
+color = "#5f3dc4"
