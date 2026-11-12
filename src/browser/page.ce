@@ -201,13 +201,22 @@ defn fromRemote(v)
     "boolean" -> result.Ok(v.value)
     "date" -> result.Ok(v.value)
     "number" -> result.Ok(if value.IsText(v.value) (if v.value == "-0" 0 else missing end) else v.value end)
-    "array" -> if dict.Has("value", v) result.Collect(list.Map(fromRemote, v.value)) else cycle() end
+    "array" -> if dict.Has("value", v) items(v.value) else cycle() end
     "object" -> if dict.Has("value", v) entries(v.value) else cycle() end
     else -> result.Err({Kind: "script", Message: "Eval gives what JSON can write, and this is a $(v.type): turn it into a number, a text, a list or an object in the expression."})
   end
 end
 
 cycle() = result.Err({Kind: "script", Message: "Eval gives what JSON can write, and this object holds itself."})
+
+defn items(values)
+  (** The values of a remote array, as a list. *)
+  out = []
+  for v in values
+    out = list.Append(fromRemote(v)?, out)
+  end
+  result.Ok(out)
+end
 
 defn entries(pairs)
   (** The pairs of a remote object, [key, value], as a dictionary. *)

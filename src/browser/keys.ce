@@ -34,7 +34,7 @@ defn chord(combo)
       key +. *)
   plus = value.Len(combo) > 1 and text.EndsWith("++", combo)
   parts = if value.Len(combo) == 1 [combo] else if plus list.Append("+", text.Split("+", text.ByteSlice(1, text.ByteLength(combo) - 2, combo))) else text.Split("+", combo) end
-  held = list.DropLast(1, parts)
+  held = list.Take(value.Len(parts) - 1, parts)
   for m in held
     if not (m in modifiers)
       bug.Panic("Press: \"$m\" in \"$combo\" is no modifier: the modifiers are Shift, Control, Alt and Meta.")

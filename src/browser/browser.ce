@@ -90,7 +90,7 @@ defn launch(program, headless, profile)
   (** Starts Firefox on the profile and reads its output up to the address of its BiDi server: an Ok of {Proc, Url,
       Output}, Output the fiber that reads the rest of its output, or an Err once it has stopped. *)
   args = ["--remote-debugging-port=0", "--profile", profile, "--no-remote"]
-  proc = sys.Start(program, args = if headless list.Prepend("--headless", args) else args end)
+  proc = sys.Start(program, args = if headless list.Concat(["--headless"], args) else args end)
   if result.IsErr(proc)
     return result.Err({Kind: "browser", Message: "$program didn't start: $(proc.Error.Message)"})
   end
@@ -122,15 +122,18 @@ defn listening(proc)
     end
     parts = text.Split("\n", "$rest$(got.Value)")
     rest = parts[value.Len(parts)]
-    for line in list.DropLast(1, parts)
+    for line in list.Take(value.Len(parts) - 1, parts)
       at = text.Find(listeningOn, line)
       if not value.IsMissing(at)
         return {Url: text.Trim(text.Slice(at + value.Len(listeningOn), value.Len(line), line)), Lines: lines, Rest: rest}
       end
-      lines = list.TakeLast(20, list.Append(line, lines))
+      lines = lastLines(list.Append(line, lines))
     end
   end
 end
+
+(* The last 20 lines of a list. *)
+lastLines(lines) = if value.Len(lines) > 20 list.Skip(value.Len(lines) - 20, lines) else lines end
 
 defn drained(proc, lines, rest)
   (** Reads the output of Firefox to its end, which comes when Firefox and the processes it started have ended, so that
@@ -139,7 +142,7 @@ defn drained(proc, lines, rest)
   while result.IsOk(got) and got.Value != ""
     parts = text.Split("\n", "$rest$(got.Value)")
     rest = parts[value.Len(parts)]
-    lines = list.TakeLast(20, list.Concat(lines, list.DropLast(1, parts)))
+    lines = lastLines(list.Concat(lines, list.Take(value.Len(parts) - 1, parts)))
     got = sys.ReadOutput(proc)
   end
   lines
