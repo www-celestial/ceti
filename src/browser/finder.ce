@@ -1,8 +1,11 @@
-(* The JavaScript that the pages run, as a text: script.callFunction sends it with its arguments (W3C WebDriver BiDi
+(* The JavaScript that the pages run, as texts: script.callFunction sends one with its arguments (W3C WebDriver BiDi
    §7.6.4.3), and its promise is awaited in the page, so a wait costs one round trip. A text costs nothing when a
-   program loads Ceti, so the waits and the matching live here.
+   program loads Ceti, so the waits and the matching live here. They run in Ceti's sandbox of each document, a realm
+   that sees the page's DOM but not its scripts (BiDi §7.6.3.20 Target), so that no page can change what they do.
 
-   seek(q, mode, ms, arg): q is the selector as JSON, a CSS text or a locator of locate.ce. It looks for the first
+   installJs gives the sandbox of a document its finder, the function ceti, once: a preload script of NewPage runs it
+   in each new document of the page's user context, and finderJs, which calls it, asks for it when a document has
+   none, as one made before. ceti(q, mode, ms, arg): q is the selector as JSON, a CSS text or a locator of locate.ce. It looks for the first
    element of q that the mode can use: attached to the document; for most modes visible, its box not empty and not
    visibility: hidden; for "click", "type", "check" and "select" not disabled, for "type" not read-only. It looks again
    at each frame (requestAnimationFrame) and at each change of the DOM (MutationObserver), until ms milliseconds have
@@ -32,7 +35,7 @@
    Description Computation 1.2; role="image" of ARIA 1.3 is img, its name in 1.2. The names come from aria-labelledby, aria-label, the labels of a field, alt, the value of a button input, legend,
    caption and figcaption, the content for the roles named from it, then title and placeholder. *)
 
-seekJs = "(q, mode, ms, arg) => {
+installJs = "() => { globalThis.ceti = (q, mode, ms, arg) => {
   const sel = JSON.parse(q);
   let found = 0, shown = 0, usable = 0, why = '';
   const norm = (s) => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim();
@@ -218,7 +221,10 @@ seekJs = "(q, mode, ms, arg) => {
     timer = setTimeout(() => end({late: true, found, shown, usable, why}), ms);
     frame = requestAnimationFrame(look);
   });
-}"
+}; }"
+
+(* The finder's call, with no text of its own to send and parse: undefined when this document has none yet. *)
+finderJs = "(q, mode, ms, arg) => typeof ceti === 'function' ? ceti(q, mode, ms, arg) : undefined"
 
 (* A promise that ends at the first scroll of the page or of one of its elements, or after six frames: Firefox scrolls
    for the wheel on a thread of its own, and the page sees it a frame or two later. *)

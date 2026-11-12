@@ -192,3 +192,16 @@ defn isPointer()
     list.All([tip == "A tip", order == "Task 2, Task 3, Task 1", inside == 300, Eval("scrollY", p)? == 500])
   end)
 end
+
+defn isPageCantChangeCeti()
+  (** A page that breaks JSON.parse, querySelectorAll, MutationObserver and requestAnimationFrame in its own realm
+      changes nothing for Ceti, whose finder runs in a sandbox that sees the DOM and not the page's scripts. *)
+  at("find.html", defn (p)
+    _ = Eval("JSON.parse = () => { throw new Error('no'); }; Document.prototype.querySelectorAll = () => []; Element.prototype.querySelectorAll = () => []; window.MutationObserver = null; window.requestAnimationFrame = null; 1", p)?
+    Click("#b1", p)?
+    list.All([
+      Text("#said", p)? == "clicked Save",
+      Text(ByRole("button", name = "Late one"), p)? == "Late one",
+      value.Equal(Texts(ByTestId("status"), p)?, ["idle"])])
+  end)
+end

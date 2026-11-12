@@ -168,7 +168,7 @@ defn isUntrustedMessages()
     text.StartsWith("Firefox saved the download out of its folder", out("$folder/..")),
     saved({status: "canceled"}, folder, "x", "y").Error.Kind == "browser",
     value.Equal(answer({}).Error, {Kind: "browser", Code: "unknown error", Message: ""}),
-    value.Equal(answer({type: "success"}), result.Ok({})),
+    value.Equal(answer({type: "success"}).Value, {}),
     value.Equal(entry({}), {Type: "log", Text: ""}),
     value.Equal(entry({type: "javascript", text: 3}), {Type: "exception", Text: ""})])
 end

@@ -270,7 +270,10 @@ the page, which looks for the first element of the selector that is:
 
 The function looks again at each frame the page draws (`requestAnimationFrame`) and at each change of the page
 (`MutationObserver`), and answers as soon as it finds one, or when its time is over. The wait is done in the page, in one
-**round trip** (one message to Firefox and its answer), rather than by asking the page again and again from Cesia. If
+**round trip** (one message to Firefox and its answer), rather than by asking the page again and again from Cesia.
+The function runs in Ceti's **sandbox** of the page, a realm of BiDi that sees the page's DOM but not its scripts: a
+page that changes `JSON.parse` or `querySelectorAll` for itself changes nothing for Ceti. A preload script puts it there
+once for each document of the page, so each wait sends a call of a few bytes, not the function. If
 the page goes to another address meanwhile, the function answers so as it leaves, and Ceti looks again in the new page,
 until the time is over.
 

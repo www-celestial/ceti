@@ -32,6 +32,7 @@ defn NewPage(b, state = missing)
       sign-in, its user context starts with those cookies and that localStorage, and the page is on about:blank. An Ok
       of the page, or an Err. *)
   uc = call("browser.createUserContext", {}, b)?.userContext
+  call("script.addPreloadScript", {functionDeclaration: installJs, sandbox: "ceti", userContexts: [uc]}, b)?
   beside = fiber.Receive(b.home, timeout = 0)
   params = if result.IsOk(beside) {type: "tab", userContext: uc, referenceContext: beside.Value} else {type: "window", userContext: uc} end
   made = call("browsingContext.create", params, b)
@@ -131,7 +132,7 @@ defn Texts(selector, p)
   (** The innerText of every element of a selector, as they are now, with no wait: an Ok of the list, which is empty
       when none matches, or an Err. An element that isn't shown, as one in display: none, gives its text as the source
       holds it. *)
-  got = callFunction(seekJs, [json.Text(selector), "texts", 0, ""], p, answerTime)?
+  got = finder([json.Text(selector), "texts", 0, ""], p, answerTime)?
   if got.type == "object"
     bug.Panic("$(says(selector)) is no CSS selector: $(fromRemote(got)?.bad)")
   end
@@ -193,25 +194,36 @@ defn act(sources, p)
 end
 
 defn callFunction(js, args, p, wait)
-  (** Calls a function of JavaScript in the page with texts and numbers, its promise awaited: an Ok of its value as
-      BiDi gives it, a remote value, or an Err. A JavaScript exception is a bug of this package, so it panics. *)
+  (** Calls a function of JavaScript in Ceti's sandbox of the page with texts and numbers, its promise awaited: an Ok of
+      its value as BiDi gives it, a remote value, or an Err. A JavaScript exception is a bug of this package, so it
+      panics. *)
   locals = [if value.IsText(a) {type: "string", value: a} else {type: "number", value: a} end for a in args]
-  got = call("script.callFunction", {functionDeclaration: js, arguments: locals, target: {context: p.context}, awaitPromise: true}, p.session, wait = wait)?
+  got = call("script.callFunction", {functionDeclaration: js, arguments: locals, target: {context: p.context, sandbox: "ceti"}, awaitPromise: true}, p.session, wait = wait)?
   if got.type == "exception"
     bug.Panic("The JavaScript of ceti failed: $(got.exceptionDetails.text)")
   end
   result.Ok(got.result)
 end
 
+defn finder(args, p, wait)
+  (** Calls the finder of the page's document with args: its remote value, once the sandbox of the document has it. *)
+  got = callFunction(finderJs, args, p, wait)?
+  if got.type != "undefined"
+    return result.Ok(got)
+  end
+  callFunction(installJs, [], p, answerTime)?
+  callFunction(finderJs, args, p, wait)
+end
+
 defn seek(selector, mode, p, timeout, arg = "")
-  (** Runs seekJs until it finds its element, looking again in the new document when the page goes away, at most
+  (** Runs the finder until it finds its element, looking again in the new document when the page goes away, at most
       timeout seconds: an Ok of what it gave, or an Err of the kind "timeout" that says what it saw. *)
   until = sys.Now() + timeout
   q = json.Text(selector)
   while true
     left = until - sys.Now()
     left = if left < 0 0 else left end
-    got = callFunction(seekJs, [q, mode, math.Round(left * 1000), arg], p, left + margin)?
+    got = finder([q, mode, math.Round(left * 1000), arg], p, left + margin)?
     if got.type == "node" or got.type == "window"
       return result.Ok(got)
     end
