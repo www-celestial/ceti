@@ -109,9 +109,9 @@ defn Eval(js, p, timeout = DefaultTimeout)
   (** The value of a JavaScript expression in the page, its promise awaited, at most timeout seconds: an Ok of the value
       as JSON writes it, a number, a text, true or false, a list, a dictionary, or missing for null and undefined; a date
       as its text, NaN and the infinities as missing. Another value, as a function, an element or a Map, is an Err of the
-      kind "script" that names it: turn it into one of those in the expression. An exception is an Err of the kind
-      "script" with its message. *)
-  got = late(call("script.evaluate", {expression: js, target: {context: p.context}, awaitPromise: true}, p.session, wait = timeout), "Eval: no value after $timeout s")?
+      kind "script" that names it: turn it into one of those in the expression; so is a value that nests deeper than 64
+      levels. An exception is an Err of the kind "script" with its message. *)
+  got = late(call("script.evaluate", {expression: js, target: {context: p.context}, awaitPromise: true, serializationOptions: {maxObjectDepth: maxDepth}}, p.session, wait = timeout), "Eval: no value after $timeout s")?
   if got.type == "exception"
     return result.Err({Kind: "script", Message: got.exceptionDetails.text})
   end
@@ -208,7 +208,10 @@ defn fromRemote(v)
   end
 end
 
-cycle() = result.Err({Kind: "script", Message: "Eval gives what JSON can write, and this object holds itself."})
+cycle() = result.Err({Kind: "script", Message: "Eval gives what JSON can write, and this object holds itself, or nests deeper than $maxDepth levels."})
+
+(* How deep a value of Eval may nest: Firefox writes no deeper, so that no message is too deep to read. *)
+maxDepth = 64
 
 defn items(values)
   (** The values of a remote array, as a list. *)

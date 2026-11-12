@@ -186,6 +186,11 @@ defn launch(program, headless, profile)
     return result.Err({Kind: "browser", Message: "Firefox gave no address of WebDriver BiDi within $startTime seconds."})
   end
   heard = got.Value
+  if not value.IsMissing(heard.Url) and not text.StartsWith("ws://127.0.0.1:", heard.Url)
+    sys.Stop(proc.Value)
+    _ = fiber.Wait(fiber.Spawn(() -> sys.WaitExit(proc.Value)), timeout = quitTime)
+    return result.Err({Kind: "browser", Message: "Firefox listens on $(heard.Url), not on 127.0.0.1: Ceti connects to this machine only."})
+  end
   if value.IsMissing(heard.Url)
     code = sys.WaitExit(proc.Value)
     return result.Err({Kind: "browser", Message: "Firefox ended with the code $code before it listened. Its last lines:\n$(text.Join("\n", heard.Lines))"})
@@ -233,11 +238,13 @@ end
 
 defn connect(url)
   (** Opens the BiDi session: the WebSocket, session.new, and the tab Firefox opened at its start. Alerts and other
-      prompts are dismissed as they open, as no person is there to answer them. *)
+      prompts are dismissed as they open, as no person is there to answer them, and downloads are refused: without it,
+      Firefox would save a page's download in the user's download folder, where the program never allowed a write. *)
   s = open("$url/session")?
   caps = {alwaysMatch: {unhandledPromptBehavior: {default: "dismiss"}}}
   started = call("session.new", {capabilities: caps}, s)
-  tree = if result.IsOk(started) call("browsingContext.getTree", {maxDepth: 0}, s) else started end
+  denied = if result.IsOk(started) call("browser.setDownloadBehavior", {downloadBehavior: {type: "denied"}}, s) else started end
+  tree = if result.IsOk(denied) call("browsingContext.getTree", {maxDepth: 0}, s) else denied end
   if result.IsErr(tree)
     hangUp(s)
     return tree

@@ -31,8 +31,10 @@ Five things happen, in this order:
 2. Firefox starts **headless**, without a window, with `--remote-debugging-port=0`: it serves WebDriver BiDi on a port
    it chooses itself, and writes `WebDriver BiDi listening on ws://127.0.0.1:PORT` on its output. Ceti reads that line,
    for at most 30 seconds.
-3. Ceti opens the WebSocket of BiDi, `ws://127.0.0.1:PORT/session`, and the session (`session.new`). Prompts such as
-   `alert` and `confirm` are dismissed as they open, since no person is there to answer them: `confirm` gives `false`.
+3. Ceti opens the WebSocket of BiDi, `ws://127.0.0.1:PORT/session`, and the session (`session.new`); it connects to no
+   address but `127.0.0.1`. Prompts such as `alert` and `confirm` are dismissed as they open, since no person is there
+   to answer them: `confirm` gives `false`. Downloads are refused: without it, a headless Firefox saves what a page
+   downloads in the user's download folder, where the program never allowed a write.
 4. `title(b)` runs, in a fiber of its own.
 5. Whatever `title` gave, an `Ok`, an `Err`, or a panic, Ceti closes Firefox (`browser.close`), waits until it has ended,
    removes the profile, and gives what `title` gave, or panics again if `title` panicked.
@@ -209,7 +211,8 @@ health(p) = browser.Eval("fetch('/api/health').then((r) => r.status)", p)   (* O
 ```
 
 Any other value, as a function, an element or a `Map`, is an `Err` of the kind `"script"` that names it: turn it into one
-of those in the expression, as `[...m]` for a `Map` or `el.id` for an element. An exception is an `Err` of the kind
+of those in the expression, as `[...m]` for a `Map` or `el.id` for an element. So is a value that nests deeper than 64
+levels, as lists of lists of lists: Firefox writes it no deeper, so that no message is too deep to read. An exception is an `Err` of the kind
 `"script"` with its message, as `TypeError: x is undefined`.
 
 ## Screenshots
