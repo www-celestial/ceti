@@ -1,0 +1,100 @@
+(* WebDriver BiDi on a WebSocket: each command is a JSON message with an id, and the browser answers each one with a
+   message of the same id, of the type "success" or "error" (W3C WebDriver BiDi, §3 Protocol). One fiber, the dispatcher,
+   owns the connection: it gives each request its id, writes it, and hands each answer to the fiber that waits for it, so
+   that several fibers can drive the browser at once. *)
+use std/websocket
+use std/fiber
+use std/json
+use std/dict
+use std/result
+use std/value
+
+(* How long a command that doesn't wait on the page may take, in seconds, before Firefox is taken for stuck. *)
+answerTime = 30
+
+(* The connection as the pages use it: requests goes to the dispatcher, gone is closed once the connection has ended,
+   and home holds, while no page uses it, the tab Firefox opened at its start, beside which the first page opens. *)
+struct session { requests, gone, home, dispatcher }
+
+failure(kind, message) = result.Err({Kind: kind, Message: message})
+lost() = failure("closed", "Firefox has closed.")
+isClosed(ch) = fiber.Receive(ch, timeout = 0).Error.Kind == "closed"
+
+defn open(url)
+  (** Connects to the BiDi server of Firefox at url and starts its dispatcher: an Ok of a session, or an Err. *)
+  c = websocket.Dial(url)?
+  requests = fiber.Channel()
+  gone = fiber.Channel()
+  result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone))))
+end
+
+defn call(method, params, s, wait = answerTime)
+  (** Sends a command and waits for its answer, at most wait seconds: an Ok of its result, an Err of the kind "browser"
+      with the error's Code and Message, of the kind "closed" once the connection has ended, or of the kind "timeout". *)
+  if isClosed(s.gone)
+    return lost()
+  end
+  reply = fiber.Channel(size = 1)
+  fiber.Send({Method: method, Params: params, Reply: reply}, s.requests)
+  got = fiber.Receive(reply, timeout = wait)
+  if result.IsErr(got)
+    return failure("timeout", "Firefox gave no answer to $method within $wait seconds.")
+  end
+  got.Value
+end
+
+defn hangUp(s)
+  (** Stops the dispatcher, which closes the connection. *)
+  if not isClosed(s.gone)
+    fiber.Send({Stop: true}, s.requests)
+  end
+  _ = fiber.Wait(s.dispatcher)
+end
+
+defn dispatch(c, requests, gone)
+  (** The fiber that owns the connection, until it ends or a Stop comes. A request gets the next id and is written; an
+      answer goes to the request of its id, as an Ok of its result or an Err. Events aren't asked for, so none comes.
+      At the end, the requests that wait get an Err of the kind "closed", as do those that come after. *)
+  waiting = dict.Dict()
+  next = 0
+  while true
+    got = fiber.Select([requests, c.Messages])
+    if result.IsErr(got)
+      break
+    end
+    if got.Value.Channel == requests
+      r = got.Value.Value
+      if dict.Has("Stop", r)
+        break
+      end
+      next += 1
+      sent = websocket.Send(json.Text({id: next, method: r.Method, params: r.Params}), c)
+      if result.IsOk(sent)
+        waiting[next] = r.Reply
+      else
+        fiber.Send(lost(), r.Reply)
+      end
+    else
+      m = json.Parse(got.Value.Value)
+      id = if result.IsOk(m) and value.IsDict(m.Value) dict.GetOr("id", missing, m.Value) else missing end
+      if dict.Has(id, waiting)
+        fiber.Send(answer(m.Value), waiting[id])
+        waiting = dict.Drop(id, waiting)
+      end
+    end
+  end
+  for reply in dict.Values(waiting)
+    fiber.Send(lost(), reply)
+  end
+  fiber.Close(gone)
+  more = fiber.Receive(requests, timeout = 0)
+  while result.IsOk(more)
+    if not dict.Has("Stop", more.Value)
+      fiber.Send(lost(), more.Value.Reply)
+    end
+    more = fiber.Receive(requests, timeout = 0)
+  end
+  _ = websocket.Close(c)
+end
+
+answer(m) = if m.type == "success" result.Ok(m.result) else result.Err({Kind: "browser", Code: m.error, Message: m.message}) end

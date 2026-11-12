@@ -1,0 +1,198 @@
+(** Drives Firefox from Cesia, through WebDriver BiDi, the W3C protocol of browser automation: open a page, click, type,
+    read a text, capture the screen, as a test of a web application or a program that automates pages does.
+    browser.Firefox starts a Firefox without a window on a profile of its own, gives it to a function, and closes it
+    whatever the function gives, as sql.Transaction does for a transaction. Each page has its own user context, so its
+    cookies and storage are its own. Click, Type, Text and WaitFor wait in the page for their element, in one round trip.
+    The page comes last, as the list in list.Map(f, xs). Errors are values: an Err of {Kind, Message}, its Kind
+    "timeout", "browser" (with the Code of BiDi), "script" or "closed". navigator.webdriver stays true: the browser
+    says that it is driven, as the W3C WebDriver standard asks, and nothing here hides it. *)
+use std/bug
+use std/dict
+use std/fiber
+use std/list
+use std/math
+use std/result
+use std/sys
+use std/text
+use std/value
+
+(* How long Firefox has to say where its BiDi server listens, and then to end, in seconds. *)
+startTime = 30
+quitTime = 5
+
+(* The line of Firefox's output that gives the address of its BiDi server. *)
+listeningOn = "WebDriver BiDi listening on "
+
+defn Firefox(f, dir, headless = true, program = "firefox")
+  (** Starts Firefox on a new profile in the folder dir, calls f(b) with the browser b, then closes Firefox and removes
+      its profile, whatever f gives, an Ok, an Err or a panic: it gives what f gave, or panics again if f panicked. As
+      sql.Transaction does, it runs in a fiber of its own, so that a caller stopped by fiber.Cancel leaves no Firefox
+      behind. headless = false shows the window, to look at a problem. program is the command of Firefox, as
+      /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An Err of the kind "browser" when Firefox can't start,
+      or doesn't end once closed. It needs exec= for program, net=127.0.0.1 for the port Firefox chooses, and read= and
+      write= for dir, where the profile is made and removed. *)
+  rethrow(result.Unwrap(fiber.Wait(fiber.Spawn(() -> whole(f, dir, headless, program)))))
+end
+
+isPanic(x) = value.IsDict(x) and dict.Has("Panic", x)
+rethrow(out) = if isPanic(out) bug.Panic(out.Panic) else out end
+
+defn whole(f, dir, headless, program)
+  (** Firefox(f, dir): what f gave, or a {Panic} of its message. *)
+  profile = newProfile(dir)?
+  started = launch(program, headless, profile)
+  if result.IsErr(started)
+    _ = removeTree(profile)
+    return started
+  end
+  fx = started.Value
+  opened = connect(fx.Url)
+  if result.IsErr(opened)
+    _ = quit(missing, fx)
+    _ = removeTree(profile)
+    return opened
+  end
+  b = opened.Value
+  ran = fiber.Wait(fiber.Spawn(() -> f(b)))
+  ended = quit(b, fx)
+  removed = removeTree(profile)
+  out = match ran
+    result.Ok(v) -> v
+    result.Err(e) -> {Panic: "$(e.Message) ($(e.File):$(e.Line))"}
+  end
+  if isPanic(out) or failed(out)
+    return out
+  end
+  ended?
+  removed?
+  out
+end
+
+failed(r) = match r
+  result.Err(_) -> true
+  else -> false
+end
+
+defn newProfile(dir)
+  (** A new empty folder in dir, for the profile of one Firefox: profile- and the time in microseconds, which no other
+      folder of dir has. *)
+  sys.Mkdir(dir)?
+  n = math.Div(sys.Now() * 1000000, 1)
+  while sys.Exists("$dir/profile-$n")
+    n += 1
+  end
+  p = "$dir/profile-$n"
+  sys.Mkdir(p)?
+  result.Ok(p)
+end
+
+defn launch(program, headless, profile)
+  (** Starts Firefox on the profile and reads its output up to the address of its BiDi server: an Ok of {Proc, Url,
+      Output}, Output the fiber that reads the rest of its output, or an Err once it has stopped. *)
+  args = ["--remote-debugging-port=0", "--profile", profile, "--no-remote"]
+  proc = sys.Start(program, args = if headless list.Prepend("--headless", args) else args end)
+  if result.IsErr(proc)
+    return result.Err({Kind: "browser", Message: "$program didn't start: $(proc.Error.Message)"})
+  end
+  reading = fiber.Spawn(() -> listening(proc.Value))
+  got = fiber.Wait(reading, timeout = startTime)
+  if result.IsErr(got)
+    fiber.Cancel(reading)
+    sys.Stop(proc.Value)
+    _ = fiber.Wait(fiber.Spawn(() -> sys.WaitExit(proc.Value)), timeout = quitTime)
+    return result.Err({Kind: "browser", Message: "Firefox gave no address of WebDriver BiDi within $startTime seconds."})
+  end
+  heard = got.Value
+  if value.IsMissing(heard.Url)
+    code = sys.WaitExit(proc.Value)
+    return result.Err({Kind: "browser", Message: "Firefox ended with the code $code before it listened. Its last lines:\n$(text.Join("\n", heard.Lines))"})
+  end
+  result.Ok({Proc: proc.Value, Url: heard.Url, Output: fiber.Spawn(() -> drained(proc.Value, heard.Lines, heard.Rest))})
+end
+
+defn listening(proc)
+  (** Reads the output of Firefox up to the line that gives the address of its BiDi server: {Url, Lines, Rest}, with Url
+      missing if the output ended first. Lines keeps the last 20 lines, Rest what came after the last line end. *)
+  lines = []
+  rest = ""
+  while true
+    got = sys.ReadOutput(proc)
+    if result.IsErr(got) or got.Value == ""
+      return {Url: missing, Lines: lines, Rest: rest}
+    end
+    parts = text.Split("\n", "$rest$(got.Value)")
+    rest = parts[value.Len(parts)]
+    for line in list.DropLast(1, parts)
+      at = text.Find(listeningOn, line)
+      if not value.IsMissing(at)
+        return {Url: text.Trim(text.Slice(at + value.Len(listeningOn), value.Len(line), line)), Lines: lines, Rest: rest}
+      end
+      lines = list.TakeLast(20, list.Append(line, lines))
+    end
+  end
+end
+
+defn drained(proc, lines, rest)
+  (** Reads the output of Firefox to its end, which comes when Firefox and the processes it started have ended, so that
+      its pipe never fills: it gives the last 20 lines. *)
+  got = sys.ReadOutput(proc)
+  while result.IsOk(got) and got.Value != ""
+    parts = text.Split("\n", "$rest$(got.Value)")
+    rest = parts[value.Len(parts)]
+    lines = list.TakeLast(20, list.Concat(lines, list.DropLast(1, parts)))
+    got = sys.ReadOutput(proc)
+  end
+  lines
+end
+
+defn connect(url)
+  (** Opens the BiDi session: the WebSocket, session.new, and the tab Firefox opened at its start. Alerts and other
+      prompts are dismissed as they open, as no person is there to answer them. *)
+  s = open("$url/session")?
+  caps = {alwaysMatch: {unhandledPromptBehavior: {default: "dismiss"}}}
+  started = call("session.new", {capabilities: caps}, s)
+  tree = if result.IsOk(started) call("browsingContext.getTree", {maxDepth: 0}, s) else started end
+  if result.IsErr(tree)
+    hangUp(s)
+    return tree
+  end
+  fiber.Send(tree.Value.contexts[1].context, s.home)
+  result.Ok(s)
+end
+
+defn quit(b, fx)
+  (** Closes Firefox: browser.close when the session is open, else the TERM signal; then up to quitTime seconds for its
+      output to end, which comes when it and the processes it started have ended, and its exit. If it still runs, the
+      TERM signal and as long again. Ok(missing) once it has ended, or an Err of the kind "browser" if it still runs. *)
+  if value.IsMissing(b)
+    sys.Stop(fx.Proc)
+  else
+    _ = call("browser.close", {}, b, wait = quitTime)
+  end
+  quiet = result.IsOk(fiber.Wait(fx.Output, timeout = quitTime))
+  exit = fiber.Spawn(() -> sys.WaitExit(fx.Proc))
+  over = result.IsOk(fiber.Wait(exit, timeout = if quiet 1 else 0.1 end))
+  if not over
+    sys.Stop(fx.Proc)
+    over = result.IsOk(fiber.Wait(exit, timeout = quitTime))
+  end
+  if not value.IsMissing(b)
+    hangUp(b)
+  end
+  if over result.Ok(missing) else result.Err({Kind: "browser", Message: "Firefox still runs $(2 * quitTime) seconds after it was closed, and after a TERM signal."}) end
+end
+
+defn removeTree(path)
+  (** Removes a folder and all it holds, a link but never what it points to: Ok(missing), or the first Err. A link that
+      leads nowhere, as the lock of a profile, has no Stat. *)
+  s = sys.Stat(path)
+  if result.IsErr(s)
+    return sys.Remove(path)
+  end
+  if s.Value.IsDir and not s.Value.IsLink
+    for name in sys.List(path)?
+      removeTree("$path/$name")?
+    end
+  end
+  sys.Remove(path)
+end

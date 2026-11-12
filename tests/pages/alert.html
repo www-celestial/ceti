@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Alert</title></head>
+<body>
+<button id="alert" type="button">alert</button>
+<button id="confirm" type="button">confirm</button>
+<p id="said">nothing yet</p>
+<script>
+const said = document.getElementById('said');
+document.getElementById('alert').addEventListener('click', () => { alert('hello'); said.textContent = 'after the alert'; });
+document.getElementById('confirm').addEventListener('click', () => { said.textContent = 'confirmed: ' + confirm('sure?'); });
+</script>
+</body>
+</html>

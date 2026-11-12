@@ -1,0 +1,73 @@
+(* The JavaScript that the pages run, as texts: script.callFunction sends one with its arguments (W3C WebDriver BiDi
+   §7.6.4.3), and its promise is awaited in the page, so a wait costs one round trip.
+
+   seek(selector, mode, ms) looks for the first element that the selector matches and that can be used: attached to
+   the document (querySelectorAll finds no other), its box not empty, not visibility: hidden, and for "click" and "type"
+   not disabled, for "type" not read-only. It looks again at each frame (requestAnimationFrame) and at each change of the
+   DOM (MutationObserver), until ms milliseconds have passed. Then, by mode:
+     "show"   gives {ok: true}
+     "text"   gives {text}, the element's innerText
+     "click"  scrolls the element to the middle of the viewport if its centre is out of it, and gives the element
+     "type"   scrolls it in the same way, gives it the focus, selects what it holds, and gives {ok: true}
+   It gives {left: true} when the page goes away (pagehide): the caller looks again in the new document. Past ms, it
+   gives {late: true, found, shown, usable}: how many elements matched, were visible, could be used. A selector that
+   isn't CSS gives {bad: message}, and an element that "type" can't type in gives {field: false}. *)
+
+seekJs = "(selector, mode, ms) => new Promise((done) => {
+  let timer = 0, frame = 0, found = 0, shown = 0, usable = 0;
+  const end = (value) => {
+    clearTimeout(timer);
+    cancelAnimationFrame(frame);
+    watcher.disconnect();
+    removeEventListener('pagehide', left);
+    done(value);
+  };
+  const left = () => end({left: true});
+  const visible = (e) => {
+    const box = e.getBoundingClientRect();
+    return box.width > 0 && box.height > 0 && getComputedStyle(e).visibility !== 'hidden';
+  };
+  const editable = (e) => e instanceof HTMLTextAreaElement || e instanceof HTMLInputElement || e.isContentEditable;
+  const ready = (e) => mode === 'show' || mode === 'text' || !(e.matches(':disabled') || (mode === 'type' && e.readOnly === true));
+  const bring = (e) => {
+    const box = e.getBoundingClientRect();
+    const x = box.left + box.width / 2, y = box.top + box.height / 2;
+    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) e.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+  };
+  const look = () => {
+    let all;
+    try { all = document.querySelectorAll(selector); } catch (error) { end({bad: String(error.message)}); return; }
+    found = all.length; shown = 0; usable = 0;
+    for (const e of all) {
+      if (!visible(e)) continue;
+      shown++;
+      if (!ready(e)) continue;
+      usable++;
+      if (mode === 'show') end({ok: true});
+      else if (mode === 'text') end({text: e.innerText});
+      else if (mode === 'click') { bring(e); end(e); }
+      else if (!editable(e)) end({field: false});
+      else {
+        bring(e);
+        e.focus();
+        if (e.isContentEditable) getSelection().selectAllChildren(e); else e.select();
+        end({ok: true});
+      }
+      return;
+    }
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(look);
+  };
+  const watcher = new MutationObserver(look);
+  addEventListener('pagehide', left);
+  watcher.observe(document, {childList: true, subtree: true, attributes: true, characterData: true});
+  timer = setTimeout(() => end({late: true, found, shown, usable}), ms);
+  look();
+})"
+
+(* The innerText of every element the selector matches, as they are now, or {bad: message} for a selector that isn't
+   CSS. *)
+textsJs = "(selector) => {
+  try { return Array.from(document.querySelectorAll(selector), (e) => e.innerText); }
+  catch (error) { return {bad: String(error.message)}; }
+}"

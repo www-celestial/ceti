@@ -1,0 +1,8 @@
+[project]
+name = "ceti"
+cesia = "1.1"
+
+# The tests start Firefox, which listens on a port it chooses on 127.0.0.1, and serve their pages themselves.
+[test]
+allow = ["exec=firefox", "net=127.0.0.1"]
+timeout = "30"

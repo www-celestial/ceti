@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Late</title>
+<style>body { font: 16px sans-serif; margin: 2em } #hidden { visibility: hidden } #none { display: none }</style></head>
+<body>
+<h1>Late</h1>
+<p id="hidden">hidden at first</p>
+<p id="none">not displayed at first</p>
+<button id="off" type="button" disabled>off at first</button>
+<p id="said"></p>
+<script>
+setTimeout(() => {
+  const p = document.createElement('p');
+  p.id = 'late';
+  p.textContent = 'here at last';
+  document.body.append(p);
+}, 300);
+setTimeout(() => { document.getElementById('hidden').style.visibility = 'visible'; }, 300);
+setTimeout(() => { document.getElementById('none').style.display = 'block'; }, 300);
+setTimeout(() => { document.getElementById('off').disabled = false; }, 300);
+document.getElementById('off').addEventListener('click', () => { document.getElementById('said').textContent = 'on'; });
+</script>
+</body>
+</html>

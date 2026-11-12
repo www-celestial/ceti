@@ -1,0 +1,53 @@
+(* The keys that Press takes by name, and the code point that WebDriver gives each one: W3C WebDriver, §15.6.2
+   Keyboard actions, the table of normalized key values (U+E000 to U+E05D). A key that types a character, as "a", "/"
+   or " ", is that character itself, so the space has no name. *)
+use std/dict
+use std/text
+use std/value
+use std/list
+use std/bug
+
+keyCodes = {
+  Backspace: 0xE003, Tab: 0xE004, Enter: 0xE007, Shift: 0xE008, Control: 0xE009, Alt: 0xE00A, Pause: 0xE00B,
+  Escape: 0xE00C, PageUp: 0xE00E, PageDown: 0xE00F, End: 0xE010, Home: 0xE011, ArrowLeft: 0xE012,
+  ArrowUp: 0xE013, ArrowRight: 0xE014, ArrowDown: 0xE015, Insert: 0xE016, Delete: 0xE017, F1: 0xE031, F2: 0xE032,
+  F3: 0xE033, F4: 0xE034, F5: 0xE035, F6: 0xE036, F7: 0xE037, F8: 0xE038, F9: 0xE039, F10: 0xE03A, F11: 0xE03B,
+  F12: 0xE03C, Meta: 0xE03D}
+
+modifiers = ["Shift", "Control", "Alt", "Meta"]
+
+defn key(name)
+  (** The value of one key for a key action: its character, or the code point of its name. A name that is no key is a
+      bug of the program, so it panics with the names. *)
+  if value.Len(name) == 1
+    return name
+  end
+  if not dict.Has(name, keyCodes)
+    bug.Panic("Press: \"$name\" is no key. A key is one character, as \"a\", or one of $(text.Join(", ", dict.Keys(keyCodes))), with modifiers before it, as \"Control+A\".")
+  end
+  text.Char(keyCodes[name])
+end
+
+defn chord(combo)
+  (** The key actions of a key with its modifiers, as "Control+Shift+ArrowLeft": each modifier down in order, the key
+      down and up, then the modifiers up in the reverse order. "+" alone, or after a modifier, is the key +. *)
+  parts = if value.Len(combo) == 1 [combo] else text.Split("+", combo) end
+  if value.Len(parts) > 1 and parts[value.Len(parts)] == ""
+    parts = list.Concat(list.Take(value.Len(parts) - 2, parts), ["+"])
+  end
+  held = list.DropLast(1, parts)
+  for m in held
+    if not (m in modifiers)
+      bug.Panic("Press: \"$m\" in \"$combo\" is no modifier: the modifiers are Shift, Control, Alt and Meta.")
+    end
+  end
+  last = key(parts[value.Len(parts)])
+  mods = [key(m) for m in held]
+  list.Flatten([
+    [{type: "keyDown", value: m} for m in mods],
+    [{type: "keyDown", value: last}, {type: "keyUp", value: last}],
+    [{type: "keyUp", value: m} for m in list.Reverse(mods)]])
+end
+
+(* The key actions that type a text, character by character. *)
+typing(words) = list.Flatten([[{type: "keyDown", value: c}, {type: "keyUp", value: c}] for c in text.Chars(words)])

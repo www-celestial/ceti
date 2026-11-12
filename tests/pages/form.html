@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Form</title>
+<style>body { font: 16px sans-serif; margin: 2em } .gone { display: none }</style></head>
+<body>
+<h1>Form</h1>
+<input id="name" type="text" value="old">
+<button id="go" type="button">Go</button>
+<p id="out">waiting</p>
+<ul><li class="item">one</li><li class="item">two</li><li class="item gone">hidden</li><li class="item">three</li></ul>
+<input id="email" type="email" value="a@b.c">
+<input id="count" type="number" value="12">
+<textarea id="notes">first</textarea>
+<div id="rich" contenteditable="true">rich <b>text</b></div>
+<input id="fixed" type="text" value="fixed" readonly>
+<input id="keys" type="text">
+<p id="pressed"></p>
+<script>
+document.getElementById('go').addEventListener('click', (e) => {
+  const n = document.getElementById('name').value;
+  document.getElementById('out').textContent = (n ? 'clicked by ' + n : 'clicked') + (e.isTrusted ? '' : ' (untrusted)');
+});
+const keys = document.getElementById('keys');
+keys.addEventListener('keydown', (e) => {
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+  const mods = ['ctrl', 'shift', 'alt', 'meta'].filter((m) => e[m + 'Key']);
+  document.getElementById('pressed').textContent += [...mods, e.key].join('+') + ' ';
+});
+</script>
+</body>
+</html>

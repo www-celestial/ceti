@@ -1,0 +1,195 @@
+(* Headless Firefox against the pages of tests/pages, which each test serves itself on a free port. A test that needs
+   several scenarios runs them on one browser, each on its page, since a start of Firefox takes about two seconds. *)
+use src/browser
+use std/bug
+use std/fiber
+use std/http
+use std/list
+use std/net
+use std/result
+use std/sys
+use std/test
+use std/text
+use std/value
+
+defn served()
+  (** The address of tests/pages, served by this test on a free port of this machine. *)
+  l = net.Listen(0)?
+  fiber.Spawn(() -> http.Serve(http.App() then http.Static("/", "tests/pages"), listener = l))
+  result.Ok("http://127.0.0.1:$(net.Port(l))")
+end
+
+defn on(page, f)
+  (** f(p, site) on a new page at tests/pages/page, in a new Firefox, then the folder of its profile is empty again. *)
+  site = served()?
+  dir = test.Temp()
+  out = browser.Firefox(defn (b)
+    p = browser.NewPage(b)?
+    browser.Go("$site/$page", p)?
+    f(p, site)
+  end, dir)
+  if value.Len(sys.List(dir)?) != 0
+    return result.Err("the profile is still in $dir")
+  end
+  out
+end
+
+panicOf(f) = fiber.Wait(fiber.Spawn(f)).Error.Message   (* The message of the panic of f(), or missing. *)
+kindOf(r) = r.Error.Kind
+
+defn isSignIn()
+  on("form.html", defn (p, site)
+    browser.Type("#name", "Ana", p)?
+    browser.Click("#go", p)?
+    list.All([
+      browser.Text("#out", p)? == "clicked by Ana",
+      value.Equal(browser.Texts(".item", p)?, ["one", "two", "hidden", "three"]),
+      value.Len(browser.Texts(".none", p)?) == 0,
+      browser.Eval("document.title", p)? == "Form",
+      browser.Eval("navigator.webdriver", p)? == true])
+  end)
+end
+
+defn isWaits()
+  on("late.html", defn (p, site)
+    never = browser.WaitFor("#never", p, timeout = 0.2)
+    list.All([
+      browser.WaitFor("#late", p)? == missing,
+      browser.Text("#hidden", p)? == "hidden at first",
+      browser.Text("#none", p)? == "not displayed at first",
+      browser.Click("#off", p)? == missing,
+      browser.Text("#said", p, timeout = 1)? == "on",
+      kindOf(never) == "timeout",
+      never.Error.Message == "#never: no element matches after 0.2 s"])
+  end)
+end
+
+defn isTimeoutSaysWhy()
+  on("form.html", defn (p, site)
+    _ = browser.Eval("document.getElementById('go').disabled = true; document.getElementById('out').style.visibility = 'hidden'", p)?
+    list.All([
+      browser.Click("#go", p, timeout = 0.1).Error.Message == "#go: no visible element that is enabled (1 visible, all disabled) after 0.1 s",
+      browser.Text("#out", p, timeout = 0.1).Error.Message == "#out: no visible element (1 match, none visible) after 0.1 s",
+      browser.Type("#fixed", "x", p, timeout = 0.1).Error.Message == "#fixed: no visible field that is enabled and not read-only (1 visible) after 0.1 s",
+      text.Contains("is no CSS selector", panicOf(() -> browser.Click("div[", p))),
+      text.Contains("is no CSS selector", panicOf(() -> browser.Texts("div[", p))),
+      text.Contains("is no field", panicOf(() -> browser.Type("h1", "x", p)))])
+  end)
+end
+
+defn isFields()
+  on("form.html", defn (p, site)
+    held(id) = browser.Eval("document.getElementById('$id').value", p)?
+    browser.Type("#email", "x@y.z", p)?
+    browser.Type("#count", "7", p)?
+    browser.Type("#notes", "two\nlines", p)?
+    browser.Type("#rich", "plain", p)?
+    browser.Type("#name", "", p)?
+    list.All([
+      held("email") == "x@y.z",
+      held("count") == "7",
+      held("notes") == "two\nlines",
+      browser.Text("#rich", p)? == "plain",
+      held("name") == ""])
+  end)
+end
+
+defn isKeys()
+  on("form.html", defn (p, site)
+    browser.Click("#keys", p)?
+    for combo in ["a", "Enter", "ArrowDown", "Control+a", "Control++", "+", "Shift+Tab"]
+      browser.Press(combo, p)?
+    end
+    list.All([
+      browser.Text("#pressed", p)? == "a Enter ArrowDown ctrl+a ctrl++ + shift+Tab",
+      text.Contains("is no key", panicOf(() -> browser.Press("Enterr", p))),
+      text.Contains("is no modifier", panicOf(() -> browser.Press("Ctrl+a", p)))])
+  end)
+end
+
+defn isScrolled()
+  on("long.html", defn (p, site)
+    browser.Click("#far", p)?
+    browser.Text("#said", p)? == "far clicked"
+  end)
+end
+
+defn isAcrossNavigation()
+  on("away.html", defn (p, site)
+    browser.Text("#target", p)? == "the new page"
+  end)
+end
+
+defn isPromptsDismissed()
+  on("alert.html", defn (p, site)
+    browser.Click("#alert", p)?
+    first = browser.Text("#said", p)?
+    browser.Click("#confirm", p)?
+    first == "after the alert" and browser.Text("#said", p)? == "confirmed: false"
+  end)
+end
+
+defn isEval()
+  on("form.html", defn (p, site)
+    list.All([
+      value.Equal(browser.Eval("({a: 1, b: [1.5, 'x', null, undefined, true], d: new Date(0), n: NaN, z: -0})", p)?, {a: 1, b: [1.5, "x", missing, missing, true], d: "1970-01-01T00:00:00.000Z", n: missing, z: 0}),
+      browser.Eval("new Promise((done) => setTimeout(() => done('late'), 50))", p)? == "late",
+      browser.Eval("undefined", p)? == missing,
+      value.Equal(browser.Eval("throw new TypeError('bad')", p).Error, {Kind: "script", Message: "TypeError: bad"}),
+      kindOf(browser.Eval("() => 1", p)) == "script",
+      kindOf(browser.Eval("document.body", p)) == "script",
+      kindOf(browser.Eval("new Promise(() => {})", p, timeout = 0.2)) == "timeout"])
+  end)
+end
+
+defn isScreenshot()
+  on("long.html", defn (p, site)
+    png = text.FromBytes([137, 80, 78, 71, 13, 10, 26, 10])
+    shot = browser.Screenshot(p)?
+    whole = browser.Screenshot(p, full = true)?
+    height(image) = list.Reduce((n, b) -> n * 256 + b, 0, text.Bytes(text.ByteSlice(21, 24, image)))
+    list.All([text.StartsWith(png, shot), text.StartsWith(png, whole), height(shot) < 1000, height(whole) > 5000])
+  end)
+end
+
+defn isPagesApart()
+  site = served()?
+  browser.Firefox(defn (b)
+    pages = [browser.NewPage(b)? for k in 1..3]
+    for p in pages
+      browser.Go("$site/form.html", p)?
+    end
+    _ = browser.Eval("document.cookie = 'k=1'; localStorage.setItem('k', '1')", pages[1])?
+    seen = fiber.Pmap(p -> [browser.Eval("document.visibilityState", p)?, browser.Eval("document.cookie", p)?, browser.Eval("localStorage.getItem('k')", p)?], pages)
+    browser.ClosePage(pages[2])?
+    list.All([
+      value.Equal(seen, [["visible", "k=1", "1"], ["visible", "", missing], ["visible", "", missing]]),
+      browser.ClosePage(pages[2]).Error.Kind == "browser",
+      browser.Text("h1", pages[3])? == "Form"])
+  end, test.Temp())
+end
+
+defn isErrors()
+  site = served()?
+  kept = browser.Firefox(defn (b)
+    p = browser.NewPage(b)?
+    refused = browser.Go("http://127.0.0.1:1/", p)
+    result.Ok({Browser: b, Page: p, Refused: refused})
+  end, test.Temp())?
+  list.All([
+    kept.Refused.Error.Kind == "browser",
+    kept.Refused.Error.Code == "unknown error",
+    browser.Text("h1", kept.Page).Error.Kind == "closed",
+    browser.NewPage(kept.Browser).Error.Kind == "closed"])
+end
+
+defn isPanicCloses()
+  dir = test.Temp()
+  message = panicOf(() -> browser.Firefox(b -> bug.Panic("on purpose"), dir))
+  text.Contains("on purpose", message) and value.Len(sys.List(dir)?) == 0
+end
+
+defn isErrGivenBack()
+  dir = test.Temp()
+  value.Equal(browser.Firefox(b -> result.Err("mine"), dir), result.Err("mine")) and value.Len(sys.List(dir)?) == 0
+end

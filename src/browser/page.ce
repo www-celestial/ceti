@@ -1,0 +1,215 @@
+(* The pages of a browser: open, go, find, click, type, read, run JavaScript, capture. *)
+use std/encode
+use std/bug
+use std/dict
+use std/fiber
+use std/list
+use std/math
+use std/result
+use std/sys
+use std/text
+use std/value
+
+(** How long Click, Type, Text, WaitFor, Go and Eval wait by default, in seconds. Each of them takes timeout = to wait
+    longer or less.
+
+      DefaultTimeout --> 5 *)
+DefaultTimeout = 5
+
+(* A page: a top-level browsing context, in a user context of its own. home is the tab Firefox opened at its start when
+   this page opened beside it, else missing. *)
+struct page { context, userContext, home, session }
+
+(* The margin, in seconds, that a wait in the page has before Cesia stops waiting for its answer. *)
+margin = 1
+
+defn NewPage(b)
+  (** Opens a page in a user context of its own, as a private window has: its cookies and its storage are its own,
+      unseen by the other pages and unseeing theirs. It is visible, as a page that a person looks at, whatever other
+      pages are open, so that its timers and its frames run at full speed. An Ok of the page, or an Err. *)
+  uc = call("browser.createUserContext", {}, b)?.userContext
+  beside = fiber.Receive(b.home, timeout = 0)
+  params = if result.IsOk(beside) {type: "tab", userContext: uc, referenceContext: beside.Value} else {type: "window", userContext: uc} end
+  made = call("browsingContext.create", params, b)
+  if result.IsErr(made)
+    if result.IsOk(beside)
+      fiber.Send(beside.Value, b.home)
+    end
+    _ = call("browser.removeUserContext", {userContext: uc}, b)
+    return made
+  end
+  result.Ok(page(made.Value.context, uc, if result.IsOk(beside) beside.Value else missing end, b))
+end
+
+defn ClosePage(p)
+  (** Closes a page and its user context: Ok(missing), or an Err. A program that opens many pages closes each one; the
+      pages that are still open close with the browser. *)
+  call("browser.removeUserContext", {userContext: p.userContext}, p.session)?
+  if not value.IsMissing(p.home)
+    fiber.Send(p.home, p.session.home)
+  end
+  result.Ok(missing)
+end
+
+defn Go(url, p, timeout = DefaultTimeout)
+  (** Goes to a URL and waits for its load event, at most timeout seconds: Ok(missing), an Err of the kind "browser"
+      when the page can't be loaded, or of the kind "timeout". *)
+  call("browsingContext.navigate", {context: p.context, url: url, wait: "complete"}, p.session, wait = timeout)?
+  result.Ok(missing)
+end
+
+defn Click(selector, p, timeout = DefaultTimeout)
+  (** Waits for the first element of a CSS selector that is visible and not disabled, scrolls it into view, and clicks
+      its centre with the mouse: the events are the browser's own, as a person's click makes them. Ok(missing), or an
+      Err of the kind "timeout". *)
+  node = seek(selector, "click", p, timeout)?
+  pointer = [
+    {type: "pointerMove", x: 0, y: 0, origin: {type: "element", element: {sharedId: node.sharedId}}},
+    {type: "pointerDown", button: 0},
+    {type: "pointerUp", button: 0}]
+  act([{type: "pointer", id: "mouse", parameters: {pointerType: "mouse"}, actions: pointer}], p)
+end
+
+defn Type(selector, words, p, timeout = DefaultTimeout)
+  (** Waits for the first field of a CSS selector that is visible, enabled and not read-only, gives it the focus, selects
+      what it holds, then types the text key by key: the field then holds the text. An input, a textarea or an element
+      that is contentEditable is a field. Ok(missing), or an Err of the kind "timeout". *)
+  seek(selector, "type", p, timeout)?
+  keys = if words == "" [{type: "keyDown", value: key("Backspace")}, {type: "keyUp", value: key("Backspace")}] else typing(words) end
+  act([{type: "key", id: "keyboard", actions: keys}], p)
+end
+
+defn Press(combo, p)
+  (** Presses a key in the element that has the focus: one character, as "a", or a key by its name, as "Enter", "Tab",
+      "Escape", "Backspace", "ArrowDown" or "F5", after its modifiers, as "Control+A" or "Shift+Tab". Ok(missing), or an
+      Err. A name that is no key is a bug, so it panics with the names. *)
+  act([{type: "key", id: "keyboard", actions: chord(combo)}], p)
+end
+
+defn Text(selector, p, timeout = DefaultTimeout)
+  (** The visible text, innerText, of the first visible element of a CSS selector, once there is one: an Ok of the text,
+      or an Err of the kind "timeout". *)
+  found = seek(selector, "text", p, timeout)?
+  result.Ok(found.text)
+end
+
+defn Texts(selector, p)
+  (** The visible texts, innerText, of every element of a CSS selector, as they are now, with no wait: an Ok of the list,
+      which is empty when none matches, or an Err. *)
+  got = callFunction(textsJs, [selector], p, answerTime)?
+  if got.type == "object"
+    bug.Panic("$selector is no CSS selector: $(fromRemote(got)?.bad)")
+  end
+  fromRemote(got)
+end
+
+defn Eval(js, p, timeout = DefaultTimeout)
+  (** The value of a JavaScript expression in the page, its promise awaited, at most timeout seconds: an Ok of the value
+      as JSON writes it, a number, a text, true or false, a list, a dictionary, or missing for null and undefined; a date
+      as its text, NaN and the infinities as missing. Another value, as a function, an element or a Map, is an Err of the
+      kind "script" that names it: turn it into one of those in the expression. An exception is an Err of the kind
+      "script" with its message. *)
+  got = call("script.evaluate", {expression: js, target: {context: p.context}, awaitPromise: true}, p.session, wait = timeout)?
+  if got.type == "exception"
+    return result.Err({Kind: "script", Message: got.exceptionDetails.text})
+  end
+  fromRemote(got.result)
+end
+
+defn Screenshot(p, full = false)
+  (** The bytes of a PNG image of what the page shows in its viewport, or of the whole page with full = true: an Ok of
+      a text of bytes, which sys.Write saves as it is, or an Err. *)
+  shot = call("browsingContext.captureScreenshot", {context: p.context, origin: if full "document" else "viewport" end}, p.session)?
+  encode.Unbase64(shot.data)
+end
+
+defn WaitFor(selector, p, timeout = DefaultTimeout)
+  (** Waits until an element of a CSS selector is visible, at most timeout seconds: Ok(missing), or an Err of the kind
+      "timeout". *)
+  seek(selector, "show", p, timeout)?
+  result.Ok(missing)
+end
+
+defn act(sources, p)
+  (** Performs input actions, then gives Ok(missing) or an Err. *)
+  call("input.performActions", {context: p.context, actions: sources}, p.session)?
+  result.Ok(missing)
+end
+
+defn callFunction(js, args, p, wait)
+  (** Calls a function of JavaScript in the page with texts and numbers, its promise awaited: an Ok of its value as
+      BiDi gives it, a remote value, or an Err. A JavaScript exception is a bug of this package, so it panics. *)
+  locals = [if value.IsText(a) {type: "string", value: a} else {type: "number", value: a} end for a in args]
+  got = call("script.callFunction", {functionDeclaration: js, arguments: locals, target: {context: p.context}, awaitPromise: true}, p.session, wait = wait)?
+  if got.type == "exception"
+    bug.Panic("The JavaScript of ceti failed: $(got.exceptionDetails.text)")
+  end
+  result.Ok(got.result)
+end
+
+defn seek(selector, mode, p, timeout)
+  (** Runs seekJs until it finds its element, looking again in the new document when the page goes away, at most
+      timeout seconds: an Ok of what it gave, or an Err of the kind "timeout" that says what it saw. *)
+  until = sys.Now() + timeout
+  while true
+    left = until - sys.Now()
+    left = if left < 0 0 else left end
+    got = callFunction(seekJs, [selector, mode, math.Round(left * 1000)], p, left + margin)?
+    if got.type == "node"
+      return result.Ok(got)
+    end
+    seen = fromRemote(got)?
+    if dict.Has("bad", seen)
+      bug.Panic("$selector is no CSS selector: $(seen.bad)")
+    else if dict.Has("field", seen)
+      bug.Panic("Type: the first visible element of $selector is no field: an input, a textarea or a contentEditable element.")
+    else if dict.Has("late", seen)
+      return result.Err({Kind: "timeout", Message: "$selector: $(lateness(seen, mode)) after $timeout s"})
+    else if not dict.Has("left", seen)
+      return result.Ok(seen)
+    end
+    if sys.Now() >= until
+      return result.Err({Kind: "timeout", Message: "$selector: the page went away and none came back after $timeout s"})
+    end
+  end
+end
+
+defn lateness(seen, mode)
+  (** What a wait saw at its end, in words. *)
+  if seen.found == 0
+    "no element matches"
+  else if seen.shown == 0
+    "no visible element ($(seen.found) match, none visible)"
+  else if mode == "type"
+    "no visible field that is enabled and not read-only ($(seen.shown) visible)"
+  else
+    "no visible element that is enabled ($(seen.shown) visible, all disabled)"
+  end
+end
+
+defn fromRemote(v)
+  (** A remote value of BiDi (§6.3 of the spec: its type, and its value) as JSON would give it: an Ok, or an Err of the
+      kind "script" for a value that JSON can't write. *)
+  match v.type
+    "undefined" -> result.Ok(missing)
+    "null" -> result.Ok(missing)
+    "string" -> result.Ok(v.value)
+    "boolean" -> result.Ok(v.value)
+    "date" -> result.Ok(v.value)
+    "number" -> result.Ok(if value.IsText(v.value) (if v.value == "-0" 0 else missing end) else v.value end)
+    "array" -> if dict.Has("value", v) result.Collect(list.Map(fromRemote, v.value)) else cycle() end
+    "object" -> if dict.Has("value", v) entries(v.value) else cycle() end
+    else -> result.Err({Kind: "script", Message: "Eval gives what JSON can write, and this is a $(v.type): turn it into a number, a text, a list or an object in the expression."})
+  end
+end
+
+cycle() = result.Err({Kind: "script", Message: "Eval gives what JSON can write, and this object holds itself."})
+
+defn entries(pairs)
+  (** The pairs of a remote object, [key, value], as a dictionary. *)
+  d = dict.Dict()
+  for pair in pairs
+    d[pair[1]] = fromRemote(pair[2])?
+  end
+  result.Ok(d)
+end
