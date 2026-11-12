@@ -95,8 +95,9 @@ defn Text(selector, p, timeout = DefaultTimeout)
 end
 
 defn Texts(selector, p)
-  (** The visible texts, innerText, of every element of a CSS selector, as they are now, with no wait: an Ok of the list,
-      which is empty when none matches, or an Err. *)
+  (** The innerText of every element of a CSS selector, as they are now, with no wait: an Ok of the list, which is empty
+      when none matches, or an Err. An element that isn't shown, as one in display: none, gives its text as the source
+      holds it. *)
   got = callFunction(textsJs, [selector], p, answerTime)?
   if got.type == "object"
     bug.Panic("$selector is no CSS selector: $(fromRemote(got)?.bad)")

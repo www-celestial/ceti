@@ -189,7 +189,8 @@ save(p) = sys.Write("page.png", browser.Screenshot(p, full = true)?)
 ```
 
 Firefox sends the image in Base64, a way to write bytes as letters; Cesia decodes it in OCaml, about 0.1 ms for a
-screenshot of 19 KB.
+screenshot of 19 KB. A message of Firefox holds at most 64 MiB, the `DefaultMaxMessage` of `std/websocket`, so a
+screenshot holds at most 48 MiB of PNG: past it, the connection closes, and the browser is `"closed"`.
 
 ## Errors
 
