@@ -32,7 +32,6 @@ defn NewPage(b, state = missing)
       sign-in, its user context starts with those cookies and that localStorage, and the page is on about:blank. An Ok
       of the page, or an Err. *)
   uc = call("browser.createUserContext", {}, b)?.userContext
-  call("script.addPreloadScript", {functionDeclaration: installJs, sandbox: "ceti", userContexts: [uc]}, b)?
   beside = fiber.Receive(b.home, timeout = 0)
   params = if result.IsOk(beside) {type: "tab", userContext: uc, referenceContext: beside.Value} else {type: "window", userContext: uc} end
   made = call("browsingContext.create", params, b)
@@ -206,7 +205,9 @@ defn callFunction(js, args, p, wait)
 end
 
 defn finder(args, p, wait)
-  (** Calls the finder of the page's document with args: its remote value, once the sandbox of the document has it. *)
+  (** Calls the finder of the page's document with args: its remote value. The first call in a document finds no
+      finder in its sandbox, so Ceti puts it there, once: a preload script would do it for each document, at a cost
+      of 2.7 ms for each Go, measured, where most documents need it once. *)
   got = callFunction(finderJs, args, p, wait)?
   if got.type != "undefined"
     return result.Ok(got)

@@ -3,9 +3,8 @@
    program loads Ceti, so the waits and the matching live here. They run in Ceti's sandbox of each document, a realm
    that sees the page's DOM but not its scripts (BiDi §7.6.3.20 Target), so that no page can change what they do.
 
-   installJs gives the sandbox of a document its finder, the function ceti, once: a preload script of NewPage runs it
-   in each new document of the page's user context, and finderJs, which calls it, asks for it when a document has
-   none, as one made before. ceti(q, mode, ms, arg): q is the selector as JSON, a CSS text or a locator of locate.ce. It looks for the first
+   installJs gives the sandbox of a document its finder, the function ceti, once: finderJs, which calls it, asks for it
+   when the document has none yet, at the first wait in it. ceti(q, mode, ms, arg): q is the selector as JSON, a CSS text or a locator of locate.ce. It looks for the first
    element of q that the mode can use: attached to the document; for most modes visible, its box not empty and not
    visibility: hidden; for "click", "type", "check" and "select" not disabled, for "type" not read-only. It looks again
    at each frame (requestAnimationFrame) and at each change of the DOM (MutationObserver), until ms milliseconds have
