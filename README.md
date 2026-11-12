@@ -31,6 +31,11 @@ cesia run --allow exec=firefox,net=127.0.0.1,read=work,write=work,write=page.png
 folder where a browser keeps its settings, cookies and cache), calls `f` with the browser, then closes Firefox and removes
 the profile, whatever `f` gives: an `Ok`, an `Err` or a panic. It is the shape of `sql.Transaction`.
 
+The profile is a copy of the **template** that `dir` keeps for this version of Firefox: the profile of a Firefox started
+once and closed before any page, so that each start skips the work of a first start. Firefox is then ready in about
+1.0 s instead of 2.1 s. No run changes the template, so no run sees what another one did; it is made at the first start
+in `dir`, which is ready in about 4.2 s, and again when Firefox's version changes.
+
 ## Install
 
 Ceti is a dependency like any other: a git repository and a tag, in the `[deps]` of `cesia.toml`.
@@ -50,7 +55,7 @@ real tests teach.
 
 | Name | What it does |
 |---|---|
-| `Firefox(f, dir, headless = true, program = "firefox")` | Starts Firefox, calls `f(b)`, closes Firefox, removes its profile, and gives what `f` gave. |
+| `Firefox(f, dir, headless = true, program = "firefox")` | Starts Firefox on a copy of the template that `dir` keeps, calls `f(b)`, closes Firefox, removes its profile, and gives what `f` gave. |
 | `NewPage(b)` | Opens a page in a **user context** of its own: its cookies and its storage are its own, as in a private window. |
 | `ClosePage(p)` | Closes a page and its user context. The pages still open close with the browser. |
 | `Go(url, p)` | Goes to a URL and waits for its `load` event. |
@@ -83,11 +88,13 @@ browser has gone). A selector that isn't CSS is a bug of the program, so it pani
 
 ## In a test
 
-A test of `cesia test` starts its own server on a free port, and Firefox, which is another program, reaches it:
+A test of `cesia test` starts its own server on a free port, and Firefox, which is another program, reaches it. The
+tests start Firefox in `.cesia/firefox`, which stays from one run of the tests to the next, so that the template is made
+once:
 
 ```toml
 [test]
-allow = ["exec=firefox", "net=127.0.0.1"]
+allow = ["exec=firefox", "net=127.0.0.1", "write=.cesia/firefox"]
 timeout = "30"
 ```
 
@@ -96,7 +103,6 @@ use deps/www-celestial/ceti/src/browser
 use std/http
 use std/net
 use std/fiber
-use std/test
 
 defn isSignIn()
   l = net.Listen(0)?
@@ -107,7 +113,7 @@ defn isSignIn()
     browser.Type("#name", "Ana", p)?
     browser.Click("#go", p)?
     browser.Text("#out", p)? == "clicked by Ana"
-  end, test.Temp())
+  end, ".cesia/firefox")
 end
 ```
 
@@ -126,9 +132,10 @@ browser's fingerprint, and nothing that gets past CAPTCHAs or bot detectors.
 ## Speed
 
 On one machine, with Firefox 159: a `Click` with its wait takes **10.9 ms**, a `Text` **1.6 ms**, a screenshot
-**19.2 ms**, and each command 0.1 ms more than the same command written by hand on raw BiDi. Firefox takes about 2 s to
-start and 0.6 s to end, which is most of a short test. [Speed](docs/book/speed.md) has every step, and how it was
-measured.
+**19.2 ms**, and each command 0.1 ms more than the same command written by hand on raw BiDi. Firefox takes about 1.0 s to
+start on the template profile and 0.5 s to end, which is most of a short test: the test of the README takes 1.7 s, from
+the start of `cesia test` to its end, against 2.7 s with an empty profile at each start. [Speed](docs/book/speed.md) has
+every step, and how it was measured.
 
 ## More
 

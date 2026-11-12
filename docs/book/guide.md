@@ -24,8 +24,10 @@ io.Print(browser.Firefox(title, "work/firefox"))
 
 Five things happen, in this order:
 
-1. A new folder is made in `work/firefox` for the **profile**: the folder where a browser keeps its settings, its
-   cookies and its cache. Each start has a new one, so nothing of one run reaches the next.
+1. A new folder is made in `work/firefox` for the **profile**, the folder where a browser keeps its settings, its
+   cookies and its cache: a copy of the **template** that `work/firefox` keeps for this version of Firefox, the profile
+   of a Firefox started once and closed before any page (see [The template profile](#the-template-profile)). Each start
+   has a copy of its own, so nothing of one run reaches the next.
 2. Firefox starts **headless**, without a window, with `--remote-debugging-port=0`: it serves WebDriver BiDi on a port
    it chooses itself, and writes `WebDriver BiDi listening on ws://127.0.0.1:PORT` on its output. Ceti reads that line,
    for at most 30 seconds.
@@ -38,15 +40,47 @@ Five things happen, in this order:
 `headless = false` shows the window, to look at a problem. `program =` names the command of Firefox when it isn't
 `firefox`, as `/Applications/Firefox.app/Contents/MacOS/firefox` on macOS.
 
+### The template profile
+
+A Firefox that starts on an empty profile spends about a second on work that it does only once for a profile: it
+registers its built-in modules, makes its databases, and fills its **startup cache**, where it keeps the scripts of its
+own interface, compiled, for the next starts. Ceti does that work once per folder. At the first start in `work/firefox`,
+it starts Firefox on an empty profile, headless, opens the session and closes it, before any page; it keeps that profile
+as the template, `work/firefox/template-159.0-20261027034604-20261027034604`. Each start then copies it, about 36 MB in
+21 ms, and Firefox is ready in about 1.0 s instead of 2.1 s ([Speed](speed.md#the-template-profile)).
+
+- **It holds no page's work.** The start that makes it opens no page, and Ceti removes what that start left that is its
+  own before it keeps it: its lock, its HTTP cache, its telemetry, its crash reports, its session, and the list of files
+  that the startup cache read, which names them by the path of the template.
+- **No run changes it.** Firefox runs on the copy, and Ceti removes the copy when Firefox has ended. So no run sees what
+  another one did: its cookies, its storage, its cache, its history, its settings. The tests of Ceti check that the
+  template is the same, byte for byte, after all of them.
+- **There is one for each version of Firefox.** Its name holds the version and the build of Firefox, as
+  `firefox --full-version` writes them; Ceti asks for them at each start, which takes 30 ms. After an update of Firefox,
+  the next start makes the template of the new version and removes the others: Firefox refuses a profile of a later
+  version than its own, and does its once-only work again on a profile of an earlier one.
+- **The first start in a folder is ready in about 4.2 s**, as it makes the template first. A folder that is thrown away
+  after each run, as `test.Temp()`, makes it again at every start: give `Firefox` a folder that stays, as
+  `.cesia/firefox` in a project ([In a test](#in-a-test)).
+
+Two programs, or two test files, can start Firefox in one folder at once. When the template isn't there yet, each makes
+its own in a folder of its own, `build-` and a number, and renames it to the template's name at once: the first keeps
+it, and the other removes its own. A copy never meets a template half made.
+
+The folder can be removed whenever no Firefox runs from it: the next start makes the template again. Beside the
+template, a `profile-` folder is the profile of a Firefox that runs, and a `build-` folder a template being made; one
+that stays after Firefox has ended comes from a Firefox that was killed with `kill -9`, or from a power cut, and can be
+removed.
+
 ### Permissions
 
 A Cesia program touches nothing outside itself unless its command line allows it. Ceti needs three permissions:
 
 | Permission | Why |
 |---|---|
-| `exec=firefox` | to start Firefox; `exec=` the path given as `program`, when there is one |
+| `exec=firefox` | to start Firefox, and to ask for its version; `exec=` the path given as `program`, when there is one |
 | `net=127.0.0.1` | to connect to Firefox, on the port it chose at its start, which no one can write in advance |
-| `read=work`, `write=work` | to make the profile in the folder given to `Firefox`, and to remove it: removing a folder lists it first |
+| `read=work`, `write=work` | to make the template and the profiles in the folder given to `Firefox`, and to remove the profiles: removing a folder lists it first |
 
 `net=127.0.0.1` opens every port of this machine to the program: a narrower permission would need a new kind of
 permission in Cesia, for the ports of the programs it started.
@@ -230,22 +264,25 @@ end
 ## In a test
 
 A test starts its own server on a free port, with `net.Listen(0)`, and Firefox, which is another program, reaches it: the
-sandbox of Cesia applies to the Cesia program only. `[test]` in `cesia.toml` gives the permissions and the time, since a
-start of Firefox takes about two seconds:
+sandbox of Cesia applies to the Cesia program only. `[test]` in `cesia.toml` gives the permissions and the time:
 
 ```toml
 [test]
-allow = ["exec=firefox", "net=127.0.0.1"]
+allow = ["exec=firefox", "net=127.0.0.1", "write=.cesia/firefox"]
 timeout = "30"
 ```
 
-`test.Temp()`, the folder that `cesia test` gives each test, is the folder of the profile: it can be read and written
-already. To pay for one start of Firefox for several scenarios, a test runs them on one browser, each on its page, and
+The tests start Firefox in `.cesia/firefox`, which stays from one test to the next and from one run of `cesia test` to
+the next, so that the template is made once: `write=.cesia/firefox` lets them write there, and a test reads the files of
+its project already. `.cesia/` is the folder where `cesia test` keeps its own state, as the failures it tries first at
+the next run, and `cesia new` keeps it out of git: the template belongs to the Firefox of this machine. `test.Temp()`,
+the folder that `cesia test` gives each test and removes after it, would make the template again at every test.
+
+To pay for one start of Firefox for several scenarios, a test runs them on one browser, each on its page, and
 `cesia test` names the part that failed:
 
 ```cesia norun
 use std/list
-use std/test
 
 defn heading(url, b)
   p = browser.NewPage(b)?
@@ -255,9 +292,12 @@ end
 
 defn isPages()
   site = "http://127.0.0.1:8080"
-  browser.Firefox(b -> list.All([heading("$site/", b)? == "Home", heading("$site/cart", b)? == "Cart"]), test.Temp())
+  browser.Firefox(b -> list.All([heading("$site/", b)? == "Home", heading("$site/cart", b)? == "Cart"]), ".cesia/firefox")
 end
 ```
+
+With the template, a start of Firefox takes about 1.0 s, and its end about 0.5 s: grouping scenarios saves about 1.6 s
+for each start that it spares.
 
 ## No Firefox left behind
 
