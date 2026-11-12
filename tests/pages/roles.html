@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Roles</title>
+<!-- Each element with data-role and data-name is found by them both in Firefox's accessibility tree and by ByRole.
+     A password field has no ARIA role (HTML-AAM), and Firefox names no row, which ARIA 1.2 names from its content:
+     Ceti does, so ByRole("row", name = "Tea 2") finds the second row. -->
+<style>body { font: 16px sans-serif; margin: 2em } .gone { display: none }</style></head>
+<body>
+<header id="k-banner" data-role="banner" data-name="">Top</header>
+<nav id="k-nav" aria-label="Main menu" data-role="navigation" data-name="Main menu"><a id="k-link" href="#a" data-role="link" data-name="Read more">Read more</a></nav>
+<main id="k-main" data-role="main" data-name="">
+<h1 id="k-h1" data-role="heading" data-name="Roles">Roles</h1>
+<h3 id="k-h3" data-role="heading" data-name="Small title">Small <em>title</em></h3>
+<button id="k-button" data-role="button" data-name="Save">Save</button>
+<button id="k-button2" data-role="button" data-name="Save draft">Save <b>draft</b></button>
+<button id="k-icon" aria-label="Close dialog" data-role="button" data-name="Close dialog">X</button>
+<button id="k-img" data-role="button" data-name="Print"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" alt="Print" width="16" height="16"></button>
+<button id="k-lb" aria-labelledby="lb1 lb2" data-role="button" data-name="Send now">go</button><span id="lb1">Send</span><span id="lb2">now</span>
+<button id="k-hid" data-role="button" data-name="Visible part">Visible part<span aria-hidden="true"> hidden part</span></button>
+<input id="k-submit" type="submit" value="Order" data-role="button" data-name="Order">
+<input id="k-ibutton" type="button" value="Undo" data-role="button" data-name="Undo">
+<div id="k-fake" role="button" tabindex="0" data-role="button" data-name="Fake button">Fake button</div>
+<a id="k-titled" href="#t" title="Home page" data-role="link" data-name="Home page"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" alt="" width="16" height="16"></a>
+<label for="k-email">Email</label><input id="k-email" type="email" data-role="textbox" data-name="Email">
+<label>Full name <input id="k-name" type="text" data-role="textbox" data-name="Full name"></label>
+<input id="k-aria" type="text" aria-label="Quantity" data-role="textbox" data-name="Quantity">
+<input id="k-ph" type="text" placeholder="Search here" data-role="textbox" data-name="Search here">
+<input id="k-search" type="search" aria-label="Find" data-role="searchbox" data-name="Find">
+<label for="k-pw">Password</label><input id="k-pw" type="password">
+<label for="k-notes">Notes</label><textarea id="k-notes" data-role="textbox" data-name="Notes"></textarea>
+<input id="k-chk" type="checkbox" data-role="checkbox" data-name="I agree"><label for="k-chk" id="k-chk-l">I agree</label>
+<label><input id="k-radio" type="radio" name="r" data-role="radio" data-name="Fast"> Fast</label>
+<label for="k-sel">Country</label><select id="k-sel" data-role="combobox" data-name="Country"><option>France</option><option>Spain</option></select>
+<select id="k-multi" multiple aria-label="Fruits" data-role="listbox" data-name="Fruits"><option id="k-opt" data-role="option" data-name="Apple">Apple</option><option>Pear</option></select>
+<label for="k-num">Count</label><input id="k-num" type="number" data-role="spinbutton" data-name="Count">
+<label for="k-range">Volume</label><input id="k-range" type="range" data-role="slider" data-name="Volume">
+<img id="k-pic" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" alt="A cat" width="16" height="16" data-role="img" data-name="A cat">
+<ul id="k-list" data-role="list" data-name=""><li id="k-li" data-role="listitem" data-name="">Tea</li><li>Coffee</li></ul>
+<table id="k-table" data-role="table" data-name="Prices"><caption>Prices</caption>
+<tr id="k-row" data-role="row" data-name=""><th id="k-th" data-role="columnheader" data-name="Item">Item</th><th>Cost</th></tr>
+<tr><td id="k-td" data-role="cell" data-name="Tea">Tea</td><td>2</td></tr></table>
+<div id="k-tab" role="tab" data-role="tab" data-name="Settings">Settings</div>
+<div id="k-switch" role="switch" aria-checked="false" aria-label="Dark mode" data-role="switch" data-name="Dark mode">dark</div>
+<div id="k-alert" role="alert" data-role="alert" data-name="">Saved</div>
+<progress id="k-prog" value="3" max="10" aria-label="Upload" data-role="progressbar" data-name="Upload"></progress>
+<figure id="k-fig" data-role="figure" data-name="A chart"><figcaption>A chart</figcaption></figure>
+<fieldset id="k-fs" data-role="group" data-name="Delivery"><legend>Delivery</legend></fieldset>
+<section id="k-region" aria-label="News" data-role="region" data-name="News">news</section>
+<dialog id="k-dialog" open aria-label="Confirm" data-role="dialog" data-name="Confirm">sure?</dialog>
+<hr id="k-hr" data-role="separator" data-name="">
+<p id="k-p" data-role="paragraph" data-name="">A paragraph.</p>
+<button id="k-gone" class="gone">Gone</button>
+<button id="k-ariahidden" aria-hidden="true">Hidden from readers</button>
+</main>
+<footer id="k-foot" data-role="contentinfo" data-name="">Bottom</footer>
+</body>
+</html>

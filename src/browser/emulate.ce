@@ -1,0 +1,33 @@
+(* How the browser presents itself to a page: its screen, its language, its time zone, its place and its network, each
+   one command of BiDi for the user context of the page. *)
+use std/dict
+use std/result
+use std/value
+
+defn Emulate(p, viewport = missing, scale = missing, locale = missing, timezone = missing, geolocation = missing, offline = missing)
+  (** Makes the browser present itself otherwise to p and to the pages of its user context, its tabs and popups, until
+      another Emulate: viewport the size of the page in CSS pixels, [width, height]; scale the device pixel ratio, as 3
+      for a phone; locale the language, as "fr-FR", which navigator.language and Intl give; timezone the time zone, as
+      "Europe/Paris"; geolocation the place, [latitude, longitude], which navigator.geolocation gives with no question;
+      offline true for a network that is off, false for it back. Each one given is one command of BiDi. Ok(missing), or
+      an Err of the kind "browser" with Firefox's code, as for a time zone that doesn't exist. *)
+  s = p.session
+  uc = [p.userContext]
+  if not value.IsMissing(viewport) or not value.IsMissing(scale)
+    sized = if value.IsMissing(viewport) {userContexts: uc} else {userContexts: uc, viewport: {width: viewport[1], height: viewport[2]}} end
+    call("browsingContext.setViewport", if value.IsMissing(scale) sized else dict.Put("devicePixelRatio", scale, sized) end, s)?
+  end
+  if not value.IsMissing(locale)
+    call("emulation.setLocaleOverride", {locale: locale, userContexts: uc}, s)?
+  end
+  if not value.IsMissing(timezone)
+    call("emulation.setTimezoneOverride", {timezone: timezone, userContexts: uc}, s)?
+  end
+  if not value.IsMissing(geolocation)
+    call("emulation.setGeolocationOverride", {coordinates: {latitude: geolocation[1], longitude: geolocation[2]}, userContexts: uc}, s)?
+  end
+  if not value.IsMissing(offline)
+    call("emulation.setNetworkConditions", {networkConditions: if offline {type: "offline"} else missing end, userContexts: uc}, s)?
+  end
+  result.Ok(missing)
+end

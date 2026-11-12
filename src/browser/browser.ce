@@ -12,6 +12,7 @@ use std/dict
 use std/fiber
 use std/list
 use std/math
+use std/path
 use std/result
 use std/sys
 use std/text
@@ -51,7 +52,7 @@ defn whole(f, dir, headless, program)
     return started
   end
   fx = started.Value
-  opened = connect(fx.Url)
+  opened = connect(fx.Url, profile)
   if result.IsErr(opened)
     _ = quit(missing, fx)
     _ = removeTree(profile)
@@ -84,7 +85,7 @@ defn newProfile(dir, program)
       template-Mozilla-Firefox-159.0-20261027034604-20261027034604, since Firefox refuses a profile of a later version
       than its own, and does its first-start work again on one of an earlier version. It is made in a folder of its
       own, then renamed at once, so that a copy never meets one half made: when another Firefox made it meanwhile, its
-      own goes. The templates of other versions then go. *)
+      own goes. The templates of other versions then go. The copy gets the preferences of prefs. *)
   ran = sys.Run(program, args = ["--full-version"])
   if result.IsErr(ran) or ran.Value.Code != 0
     return result.Err({Kind: "browser", Message: "$program --full-version gave no version."})
@@ -108,12 +109,26 @@ defn newProfile(dir, program)
   end
   p = newFolder(dir, "profile")?
   copied = copyTree(model, p)
+  copied = if result.IsOk(copied) sys.Write("$p/user.js", prefs) else copied end
   if result.IsErr(copied)
     _ = removeTree(p)
     return copied
   end
   result.Ok(p)
 end
+
+(* The preferences that each profile gets in its user.js, which Firefox reads at its start: a turn of the wheel scrolls
+   at once, as a test needs, rather than over half a second; and a page that asks for its position gets the one that
+   Emulate gave, with no question that no one would answer, or else an error at once: never the machine's own place,
+   which Firefox would ask of a network service or of GeoClue. *)
+prefs = "user_pref(\"general.smoothScroll\", false);
+user_pref(\"geo.prompt.testing\", true);
+user_pref(\"geo.prompt.testing.allow\", true);
+user_pref(\"geo.provider.network.url\", \"\");
+user_pref(\"geo.provider.use_geoclue\", false);
+user_pref(\"geo.provider.use_corelocation\", false);
+user_pref(\"geo.provider.use_gpsd\", false);
+"
 
 defn newFolder(dir, kind)
   (** A new empty folder in dir: kind, a dash and the time in microseconds, which no other folder of dir has. *)
@@ -137,7 +152,7 @@ defn firstStart(program, profile)
   (** Starts Firefox once on an empty profile, headless, and closes it before any page: the template's work, done once.
       Ok(missing) once Firefox ended by itself with the code 0, with its lock and its leftovers removed, or an Err. *)
   fx = launch(program, true, profile)?
-  opened = connect(fx.Url)
+  opened = connect(fx.Url, profile)
   code = quit(if result.IsOk(opened) opened.Value else missing end, fx)?
   opened?
   if code != 0
@@ -186,6 +201,11 @@ defn launch(program, headless, profile)
     return result.Err({Kind: "browser", Message: "Firefox gave no address of WebDriver BiDi within $startTime seconds."})
   end
   heard = got.Value
+  if not value.IsMissing(heard.Url) and not text.StartsWith("ws://127.0.0.1:", heard.Url)
+    sys.Stop(proc.Value)
+    _ = fiber.Wait(fiber.Spawn(() -> sys.WaitExit(proc.Value)), timeout = quitTime)
+    return result.Err({Kind: "browser", Message: "Firefox listens on $(heard.Url), not on 127.0.0.1: Ceti connects to this machine only."})
+  end
   if value.IsMissing(heard.Url)
     code = sys.WaitExit(proc.Value)
     return result.Err({Kind: "browser", Message: "Firefox ended with the code $code before it listened. Its last lines:\n$(text.Join("\n", heard.Lines))"})
@@ -231,19 +251,34 @@ defn drained(proc, lines, rest)
   lines
 end
 
-defn connect(url)
-  (** Opens the BiDi session: the WebSocket, session.new, and the tab Firefox opened at its start. Alerts and other
-      prompts are dismissed as they open, as no person is there to answer them. *)
+defn connect(url, profile)
+  (** Opens the BiDi session of a Firefox on the profile: the WebSocket, session.new, and the tab Firefox opened at its
+      start. It asks for the events of the prompts and of the console: the dispatcher dismisses each prompt that no
+      Dialog waits for, as no person is there to answer it, and keeps the console. Downloads are refused: without it,
+      Firefox would save a page's download in the user's download folder, where the program never allowed a write. *)
   s = open("$url/session")?
-  caps = {alwaysMatch: {unhandledPromptBehavior: {default: "dismiss"}}}
+  caps = {alwaysMatch: {unhandledPromptBehavior: {default: "ignore"}}}
   started = call("session.new", {capabilities: caps}, s)
-  tree = if result.IsOk(started) call("browsingContext.getTree", {maxDepth: 0}, s) else started end
+  heard = if result.IsOk(started) call("session.subscribe", {events: ["browsingContext.userPromptOpened", "log.entryAdded"]}, s) else started end
+  denied = if result.IsOk(heard) call("browser.setDownloadBehavior", {downloadBehavior: {type: "denied"}}, s) else heard end
+  tree = if result.IsOk(denied) call("browsingContext.getTree", {maxDepth: 0}, s) else denied end
   if result.IsErr(tree)
     hangUp(s)
     return tree
   end
   fiber.Send(tree.Value.contexts[1].context, s.home)
-  result.Ok(s)
+  result.Ok(session(s.requests, s.gone, s.home, s.dispatcher, profile, hereOf(dict.GetOr("moz:profile", missing, started.Value.capabilities), profile)))
+end
+
+defn hereOf(full, profile)
+  (** The current folder, which Cesia doesn't give: full, the absolute path of the profile that Firefox gives in
+      session.new, less the relative path that Ceti gave it; missing when that path is absolute or goes up. *)
+  parts = [x for x in text.Split("/", profile) if x != "" and x != "."]
+  tail = "/$(text.Join("/", parts))"
+  if not value.IsText(full) or path.IsAbsolute(profile) or ".." in parts or not text.EndsWith(tail, full)
+    return missing
+  end
+  text.ByteSlice(1, text.ByteLength(full) - text.ByteLength(tail), full)
 end
 
 defn quit(b, fx)
@@ -274,17 +309,17 @@ defn quit(b, fx)
   result.Ok(if stopped missing else ended.Value end)
 end
 
-defn removeTree(path)
+defn removeTree(at)
   (** Removes a folder and all it holds, a link but never what it points to: Ok(missing), or the first Err. A link that
       leads nowhere, as the lock of a profile, has no Stat. *)
-  s = sys.Stat(path)
+  s = sys.Stat(at)
   if result.IsErr(s)
-    return sys.Remove(path)
+    return sys.Remove(at)
   end
   if s.Value.IsDir and not s.Value.IsLink
-    for name in sys.List(path)?
-      removeTree("$path/$name")?
+    for name in sys.List(at)?
+      removeTree("$at/$name")?
     end
   end
-  sys.Remove(path)
+  sys.Remove(at)
 end

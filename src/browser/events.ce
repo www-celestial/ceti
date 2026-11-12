@@ -1,0 +1,99 @@
+(* What a page does by itself, as BiDi events say it: its dialogs, its console, the pages it opens. A function that
+   waits for one during an action watches for it first, so that none comes too early to be seen. *)
+use std/bug
+use std/dict
+use std/fiber
+use std/result
+use std/sys
+use std/value
+
+defn during(methods, test, action, p, timeout, meanwhile = missing)
+  (** Runs action() while it watches for the first event of one of the methods whose params pass test, and gives it
+      once the action has ended: an Ok of the event's params, the action's Err, or an Err of the kind "timeout" when no
+      such event came within timeout seconds after the action. meanwhile(params), when given, runs as soon as the event
+      comes, before the action has ended: a dialog stops the action until it is answered. A panic of the action panics
+      again here. *)
+  seen = fiber.Channel(size = 1)
+  id = watch(methods, test, e -> fiber.Send(e, seen), p.session)?
+  ended = fiber.Channel(size = 1)
+  fiber.Spawn(() -> fiber.Send(fiber.Wait(fiber.Spawn(action)), ended))
+  first = fiber.Select([seen, ended])?
+  e = if first.Channel == seen first.Value else missing end
+  if not value.IsMissing(e) and not value.IsMissing(meanwhile)
+    meanwhile(e)?
+  end
+  out = if value.IsMissing(e) first.Value else fiber.Receive(ended)? end
+  if result.IsErr(out)
+    unwatch(id, p.session)
+    bug.Panic("$(out.Error.Message) ($(out.Error.File):$(out.Error.Line))")
+  end
+  if failed(out.Value)
+    unwatch(id, p.session)
+    return out.Value
+  end
+  if value.IsMissing(e)
+    later = fiber.Receive(seen, timeout = timeout)
+    if result.IsErr(later)
+      unwatch(id, p.session)
+      return result.Err({Kind: "timeout", Message: "no $(methods[1]) within $timeout s after the action"})
+    end
+    e = later.Value
+    if not value.IsMissing(meanwhile)
+      meanwhile(e)?
+    end
+  end
+  result.Ok(e)
+end
+
+defn Dialog(answer, action, p, timeout = DefaultTimeout)
+  (** Runs action() and answers the first dialog that a page of p's user context opens meanwhile, alert, confirm, prompt
+      or the question of beforeunload: true accepts it, false dismisses it, a text accepts a prompt with that text. The
+      dialogs that no Dialog waits for are dismissed, as no person is there to answer them. An Ok of {Type, Message,
+      Default}: Type "alert", "confirm", "prompt" or "beforeunload", Default the text a prompt offered or missing. An Err
+      of the kind "timeout" when no dialog opened within timeout seconds after the action, or the action's Err. *)
+  reply = defn (e)
+    params = if value.IsText(answer) {context: e.context, accept: true, userText: answer} else {context: e.context, accept: answer} end
+    call("browsingContext.handleUserPrompt", params, p.session)?
+    result.Ok(missing)
+  end
+  e = during(["browsingContext.userPromptOpened"], e -> dict.GetOr("userContext", "", e) == p.userContext, action, p, timeout, meanwhile = reply)?
+  result.Ok({Type: e.type, Message: e.message, Default: dict.GetOr("defaultValue", missing, e)})
+end
+
+defn Console(p)
+  (** What the pages of p's user context, p and its frames, tabs and popups, wrote in the console since p opened, oldest
+      first: an Ok of a list of {Type, Text}, Type the method of the console, as "log", "info", "warn", "error" or
+      "debug", or "exception" for an error that no code of the page caught. It keeps the last 1,000 entries of a user
+      context, each cut to 16,384 characters, so that a page can't fill the memory. *)
+  ask({Console: p.userContext}, p.session)
+end
+
+defn NewTab(p)
+  (** Opens a page in the user context of p: it shares its cookies and its storage, as a second tab of one person
+      does. NewPage is the way to another person. It closes with p's user context, or alone with ClosePage. An Ok of
+      the page, or an Err. *)
+  made = call("browsingContext.create", {type: "window", userContext: p.userContext}, p.session)?
+  result.Ok(page(made.context, p.userContext, missing, p.session, "tab"))
+end
+
+defn Popup(action, p, timeout = DefaultTimeout)
+  (** Runs action() and gives the page that a page of p's user context opened meanwhile, by window.open or by a link
+      whose target is _blank, once it has loaded, or once timeout seconds have passed when it loads nothing. It shares
+      p's cookies and storage, and closes alone with ClosePage. An Ok of the page, an Err of the kind "timeout" when no
+      page opened, or the action's Err. *)
+  loads = fiber.Channel(size = 64)
+  sub = call("session.subscribe", {events: ["browsingContext.contextCreated", "browsingContext.load"], userContexts: [p.userContext]}, p.session)?.subscription
+  id = watch(["browsingContext.load"], e -> true, e -> fiber.Send(e.context, loads), p.session, once = false)?
+  opened = during(["browsingContext.contextCreated"], e -> value.IsMissing(dict.GetOr("parent", missing, e)) and dict.GetOr("userContext", "", e) == p.userContext and dict.GetOr("context", "", e) != p.context, action, p, timeout)
+  if result.IsOk(opened)
+    until = sys.Now() + timeout
+    loaded = false
+    while not loaded and sys.Now() < until
+      got = fiber.Receive(loads, timeout = until - sys.Now())
+      loaded = result.IsOk(got) and got.Value == opened.Value.context
+    end
+  end
+  unwatch(id, p.session)
+  _ = call("session.unsubscribe", {subscriptions: [sub]}, p.session)
+  result.Ok(page(opened?.context, p.userContext, missing, p.session, "tab"))
+end

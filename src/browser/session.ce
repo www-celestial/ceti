@@ -1,31 +1,40 @@
 (* WebDriver BiDi on a WebSocket: each command is a JSON message with an id, and the browser answers each one with a
-   message of the same id, of the type "success" or "error" (W3C WebDriver BiDi, §3 Protocol). One fiber, the dispatcher,
-   owns the connection: it gives each request its id, writes it, and hands each answer to the fiber that waits for it, so
-   that several fibers can drive the browser at once. *)
+   message of the same id, of the type "success" or "error" (W3C WebDriver BiDi, §3 Protocol); events come without an
+   id. One fiber, the dispatcher, owns the connection: it gives each request its id, writes it, hands each answer to the
+   fiber that waits for it, so that several fibers can drive the browser at once, and hands each event to the watches
+   that ask for it. *)
 use std/websocket
 use std/fiber
 use std/json
 use std/dict
+use std/list
 use std/result
+use std/text
 use std/value
 
 (* How long a command that doesn't wait on the page may take, in seconds, before Firefox is taken for stuck. *)
 answerTime = 30
 
 (* The connection as the pages use it: requests goes to the dispatcher, gone is closed once the connection has ended,
-   and home holds, while no page uses it, the tab Firefox opened at its start, beside which the first page opens. *)
-struct session { requests, gone, home, dispatcher }
+   home holds, while no page uses it, the tab Firefox opened at its start, beside which the first page opens, profile is
+   the folder of the profile as Ceti gave it to Firefox, and here the current folder, absolute, or missing when Ceti
+   can't tell it. *)
+struct session { requests, gone, home, dispatcher, profile, here }
 
 failure(kind, message) = result.Err({Kind: kind, Message: message})
 lost() = failure("closed", "Firefox has closed.")
 isClosed(ch) = fiber.Receive(ch, timeout = 0).Error.Kind == "closed"
+
+(* What the console keeps of each user context: its last entries, each cut to its first characters. *)
+consoleEntries = 1000
+entryLength = 16384
 
 defn open(url)
   (** Connects to the BiDi server of Firefox at url and starts its dispatcher: an Ok of a session, or an Err. *)
   c = websocket.Dial(url)?
   requests = fiber.Channel()
   gone = fiber.Channel()
-  result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone))))
+  result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone)), missing, missing))
 end
 
 defn call(method, params, s, wait = answerTime)
@@ -43,6 +52,27 @@ defn call(method, params, s, wait = answerTime)
   got.Value
 end
 
+defn ask(r, s)
+  (** Sends the dispatcher a request of its own, as a watch, and gives its answer, or an Err of the kind "closed". *)
+  if isClosed(s.gone)
+    return lost()
+  end
+  reply = fiber.Channel(size = 1)
+  fiber.Send(dict.Put("Reply", reply, r), s.requests)
+  got = fiber.Receive(reply, timeout = answerTime)
+  if result.IsErr(got) lost() else got.Value end
+end
+
+defn watch(methods, test, run, s, once = true, only = false)
+  (** Asks the dispatcher to call run(params) in a fiber of its own for each event of one of the methods whose params
+      pass test, a quick function that the dispatcher runs itself, which reads them with dict.GetOr; with once, for the
+      first one only. Of the watches that are only, the last one given that takes an event has it, as the last route
+      does a request. An Ok of the watch's number, for unwatch. *)
+  ask({Watch: {Methods: methods, Test: test, Run: run, Once: once, Only: only}}, s)
+end
+
+unwatch(id, s) = fiber.Send({Unwatch: id}, s.requests)   (* Ends a watch, if it hasn't ended. *)
+
 defn hangUp(s)
   (** Stops the dispatcher, which closes the connection. *)
   if not isClosed(s.gone)
@@ -53,9 +83,13 @@ end
 
 defn dispatch(c, requests, gone)
   (** The fiber that owns the connection, until it ends or a Stop comes. A request gets the next id and is written; an
-      answer goes to the request of its id, as an Ok of its result or an Err. Events aren't asked for, so none comes.
-      At the end, the requests that wait get an Err of the kind "closed", as do those that come after. *)
+      answer goes to the request of its id, as an Ok of its result or an Err; an event goes to the watches that take it.
+      A prompt that no watch takes is dismissed, and the console's entries are kept for each user context. At the end,
+      the requests that wait get an Err of the kind "closed", as do those that come after. *)
+  s = {requests: requests, gone: gone}
   waiting = dict.Dict()
+  watches = dict.Dict()
+  logs = dict.Dict()
   next = 0
   while true
     got = fiber.Select([requests, c.Messages])
@@ -68,18 +102,56 @@ defn dispatch(c, requests, gone)
         break
       end
       next += 1
-      sent = websocket.Send(json.Text({id: next, method: r.Method, params: r.Params}), c)
-      if result.IsOk(sent)
-        waiting[next] = r.Reply
+      if dict.Has("Watch", r)
+        watches[next] = r.Watch
+        fiber.Send(result.Ok(next), r.Reply)
+      else if dict.Has("Unwatch", r)
+        watches = dict.Drop(r.Unwatch, watches)
+      else if dict.Has("Console", r)
+        fiber.Send(result.Ok(dict.GetOr(r.Console, [], logs)), r.Reply)
+      else if dict.Has("Forget", r)
+        logs = dict.Drop(r.Forget, logs)
       else
-        fiber.Send(lost(), r.Reply)
+        sent = websocket.Send(json.Text({id: next, method: r.Method, params: r.Params}), c)
+        if result.IsOk(sent)
+          waiting[next] = r.Reply
+        else
+          fiber.Send(lost(), r.Reply)
+        end
       end
     else
-      m = json.Parse(got.Value.Value)
-      id = if result.IsOk(m) and value.IsDict(m.Value) dict.GetOr("id", missing, m.Value) else missing end
-      if dict.Has(id, waiting)
-        fiber.Send(answer(m.Value), waiting[id])
+      parsed = json.Parse(got.Value.Value)
+      m = if result.IsOk(parsed) and value.IsDict(parsed.Value) parsed.Value else {} end
+      id = dict.GetOr("id", missing, m)
+      if value.IsNumber(id) and dict.Has(id, waiting)
+        fiber.Send(answer(m), waiting[id])
         waiting = dict.Drop(id, waiting)
+      else if dict.GetOr("type", "", m) == "event" and value.IsDict(dict.GetOr("params", missing, m))
+        e = m.params
+        method = dict.GetOr("method", "", m)
+        taken = false
+        owned = false
+        for k in list.Reverse(list.Sort(dict.Keys(watches)))
+          w = watches[k]
+          if not (w.Only and owned) and method in w.Methods and w.Test(e)
+            fiber.Spawn(() -> w.Run(e))
+            taken = true
+            owned = owned or w.Only
+            if w.Once
+              watches = dict.Drop(k, watches)
+            end
+          end
+        end
+        if method == "network.beforeRequestSent" and dict.GetOr("isBlocked", false, e) == true and not owned
+          fiber.Spawn(() -> call("network.continueRequest", {request: dict.GetOr("request", "", requestOf(e))}, s))
+        else if method == "log.entryAdded"
+          source = dict.GetOr("source", {}, e)
+          uc = if value.IsDict(source) dict.GetOr("userContext", "default", source) else "default" end
+          uc = if value.IsText(uc) uc else "default" end
+          logs[uc] = kept(list.Append(entry(e), dict.GetOr(uc, [], logs)))
+        else if method == "browsingContext.userPromptOpened" and not taken
+          fiber.Spawn(() -> call("browsingContext.handleUserPrompt", {context: dict.GetOr("context", "", e), accept: false}, s))
+        end
       end
     end
   end
@@ -89,7 +161,7 @@ defn dispatch(c, requests, gone)
   fiber.Close(gone)
   more = fiber.Receive(requests, timeout = 0)
   while result.IsOk(more)
-    if not dict.Has("Stop", more.Value)
+    if dict.Has("Reply", more.Value)
       fiber.Send(lost(), more.Value.Reply)
     end
     more = fiber.Receive(requests, timeout = 0)
@@ -97,4 +169,25 @@ defn dispatch(c, requests, gone)
   _ = websocket.Close(c)
 end
 
-answer(m) = if m.type == "success" result.Ok(m.result) else result.Err({Kind: "browser", Code: m.error, Message: m.message}) end
+(* The request of a network event, a dictionary, or {} for a message that holds none: the tests of the watches, which
+   the dispatcher runs, read the events with it and with dict.GetOr, compare with ==, and never panic. *)
+requestOf(e) = if value.IsDict(dict.GetOr("request", missing, e)) e.request else {} end
+
+kept(entries) = if value.Len(entries) > consoleEntries list.Skip(1, entries) else entries end   (* The last entries. *)
+
+defn entry(e)
+  (** An entry of the console as Console gives it: {Type, Text}, Type the console's method, or "exception" for an
+      error that no code caught, Text cut to entryLength characters. *)
+  words = dict.GetOr("text", "", e)
+  words = if value.IsText(words) words else "" end
+  {Type: if dict.GetOr("type", "", e) == "javascript" "exception" else dict.GetOr("method", dict.GetOr("level", "log", e), e) end,
+   Text: if value.Len(words) > entryLength text.Slice(1, entryLength, words) else words end}
+end
+
+defn answer(m)
+  (** The answer to a command as an Ok of its result or an Err of its error, whatever the message holds. *)
+  if dict.GetOr("type", "", m) == "success"
+    return result.Ok(dict.GetOr("result", {}, m))
+  end
+  result.Err({Kind: "browser", Code: dict.GetOr("error", "unknown error", m), Message: dict.GetOr("message", "", m)})
+end

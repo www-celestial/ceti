@@ -28,8 +28,9 @@ defn served()
 end
 
 defn others(dir)
-  (** The names in dir besides its templates: the profiles of runs that should have gone. *)
-  result.Ok([name for name in sys.List(dir)? if not text.StartsWith("template-", name)])
+  (** The profiles in dir, and the templates being made, of runs that should have gone; the kept folders of the other
+      test files, which run at the same time, are left out. *)
+  result.Ok([name for name in sys.List(dir)? if text.StartsWith("profile-", name) or text.StartsWith("build-", name)])
 end
 
 defn on(page, f)
@@ -152,7 +153,9 @@ defn isEval()
       value.Equal(browser.Eval("throw new TypeError('bad')", p).Error, {Kind: "script", Message: "TypeError: bad"}),
       kindOf(browser.Eval("() => 1", p)) == "script",
       kindOf(browser.Eval("document.body", p)) == "script",
-      browser.Eval("new Promise(() => {})", p, timeout = 0.2).Error.Message == "Eval: no value after 0.2 s"])
+      browser.Eval("new Promise(() => {})", p, timeout = 0.2).Error.Message == "Eval: no value after 0.2 s",
+      value.Equal(browser.Eval("[[[[1]]]]", p)?, [[[[1]]]]),
+      text.Contains("deeper than 64 levels", browser.Eval("(() => { let a = []; for (let i = 0; i < 5000; i++) a = [a]; return a; })()", p).Error.Message)])
   end)
 end
 

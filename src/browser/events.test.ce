@@ -1,0 +1,176 @@
+(* Dialogs, the console, tabs and popups, the network and downloads, in headless Firefox against tests/pages and a few
+   answers of the test's own server. The tests start Firefox in a kept folder of their own. *)
+use std/dict
+use std/fiber
+use std/http
+use std/json
+use std/list
+use std/net
+use std/result
+use std/sys
+use std/test
+use std/text
+use std/value
+
+kept = ".cesia/firefox/events"
+
+defn served(hits)
+  (** tests/pages and /api/items and /api/save, on a free port; each request of /api sends its path on hits. *)
+  l = net.Listen(0)?
+  items = defn (r)
+    fiber.Send("items", hits)
+    http.Json(["real"])
+  end
+  saved = defn (r)
+    fiber.Send("save", hits)
+    http.Plain("for real")
+  end
+  fiber.Spawn(() -> http.Serve(http.App() then http.Get("/api/items", items) then http.Post("/api/save", saved) then http.Static("/", "tests/pages"), listener = l))
+  result.Ok("http://127.0.0.1:$(net.Port(l))")
+end
+
+defn on(f)
+  (** f(p, hits) on a new page at events.html, in a new Firefox. *)
+  hits = fiber.Channel(size = 100)
+  url = "$(served(hits)?)/events.html"
+  Firefox(defn (b)
+    p = NewPage(b)?
+    Go(url, p)?
+    f(p, hits)
+  end, kept)
+end
+
+panicky(f) = fiber.Wait(fiber.Spawn(f)).Error.Message   (* The message of the panic of f(), or missing. *)
+
+defn isDialogs()
+  on(defn (p, hits)
+    a = Dialog(true, () -> Click("#alert", p), p)?
+    c = Dialog(true, () -> Click("#confirm", p), p)?
+    confirmed = Text("#said", p)?
+    q = Dialog("Ana", () -> Click("#prompt", p), p)?
+    named = Text("#said", p)?
+    late = Dialog(false, () -> Click("#later", p), p)?
+    Click("#confirm", p)?
+    list.All([
+      value.Equal(a, {Type: "alert", Message: "hello", Default: missing}),
+      c.Message == "Delete the file?" and confirmed == "confirmed: true",
+      q.Default == "nobody" and named == "name: Ana",
+      late.Message == "late" and Text("#said", p)? == "confirmed: false",
+      Dialog(true, () -> Click("h1", p), p, timeout = 0.2).Error.Kind == "timeout",
+      Dialog(true, () -> result.Err("mine"), p).Error == "mine"])
+  end)
+end
+
+defn isConsole()
+  on(defn (p, hits)
+    Click("#log", p)?
+    Click("#boom", p)?
+    _ = Eval("new Promise((done) => setTimeout(done, 100))", p)?
+    seen = Console(p)?
+    _ = Eval("for (let i = 0; i < 1500; i++) console.log('line ' + i); 'x'.repeat(20000)", p)?
+    _ = Eval("console.log('x'.repeat(20000))", p)?
+    flood = Console(p)?
+    list.All([
+      value.Equal(list.Take(3, seen), [{Type: "log", Text: "one 2"}, {Type: "warn", Text: "careful"}, {Type: "error", Text: "bad"}]),
+      seen[4].Type == "exception" and text.Contains("boom", seen[4].Text),
+      value.Len(flood) == 1000,
+      value.Len(flood[1000].Text) == 16384])
+  end)
+end
+
+defn isRoutes()
+  on(defn (p, hits)
+    Route("/api/items", r -> {Status: 200, Body: json.Text(["mocked", r.Method]), Headers: {"content-type": "application/json"}}, p)?
+    Route("https://ping.invalid/*", r -> result.Err("blocked"), p)?
+    Click("#load", p)?
+    WaitFor("li", p)?
+    mocked = Texts("li", p)?
+    Click("#ping", p)?
+    ping = Text("#said", p, timeout = 1)?
+    Route("/api/*", r -> missing, p)?
+    Click("#load", p)?
+    WaitFor(ByText("real"), p)?
+    list.All([
+      value.Equal(mocked, ["mocked", "GET"]),
+      ping == "no ping",
+      fiber.Receive(hits, timeout = 1)? == "items",
+      result.IsErr(fiber.Receive(hits, timeout = 0))])
+  end)
+end
+
+defn isResponse()
+  on(defn (p, hits)
+    r = Response("/api/save", () -> Click("#save", p), p)?
+    items = Response("/api/items", () -> Click("#load", p), p)?
+    list.All([
+      r.Status == 200 and r.Method == "POST" and r.Body == "for real",
+      text.EndsWith("/api/items?page=1", items.Url) and items.Body == "[\"real\"]",
+      text.StartsWith("application/json", items.Headers["content-type"]),
+      Response("/nothing", () -> Click("h1", p), p, timeout = 0.2).Error.Kind == "timeout"])
+  end)
+end
+
+defn isPatterns()
+  (** The patterns of Route and Response: a path on any origin without the query, or a whole URL; * any run. *)
+  u = "http://127.0.0.1:8080/api/items?page=2"
+  list.All([
+    matches("/api/items", u), matches("/api/*", u), matches("/*/items", u), matches("*", u),
+    matches("http://127.0.0.1:8080/api/items?page=2", u), matches("http://127.0.0.1:*/api/*", u),
+    not matches("/api", u), not matches("/api/items?page=2", u), not matches("/api/item", u),
+    not matches("https://127.0.0.1:8080/*", u), matches("/a.b(c)", "http://x/a.b(c)"), not matches("/a.b", "http://x/aXb"),
+    matches("/", "http://x"), matches("/", "http://x/#top"), not matches("*", 5), not matches("*", missing)])
+end
+
+defn isTabsAndPopups()
+  on(defn (p, hits)
+    _ = Eval("document.cookie = 'who=ana'", p)?
+    help = Popup(() -> Click(ByRole("link", name = "Help"), p), p)?
+    opened = Popup(() -> Click("#open", p), p)?
+    tab = NewTab(p)?
+    Go("$(text.Replace("/events.html", "", Eval("location.href", p)?))/form.html", tab)?
+    out = list.All([
+      Text("#target", help)? == "the new page",
+      Text("h1", opened)? == "Form",
+      Eval("document.cookie", tab)? == "who=ana",
+      Popup(() -> Click("h1", p), p, timeout = 0.2).Error.Kind == "timeout"])
+    ClosePage(help)?
+    out and Text("h1", p)? == "Events" and browserError(Text("#target", help)) == "browser"
+  end)
+end
+
+browserError(r) = r.Error.Kind
+
+defn isDownload()
+  on(defn (p, hits)
+    dir = test.Temp()
+    Click("#export", p)?
+    _ = Eval("new Promise((done) => setTimeout(done, 300))", p)?
+    d = Download(() -> Click(ByRole("link", name = "Export"), p), "$dir/report.csv", p)?
+    list.All([
+      d.Name == "report.csv" and text.EndsWith("/report.csv", d.Url),
+      sys.Read("$dir/report.csv")? == "id,name\n1,Ana\n",
+      value.Equal(sys.List(dir)?, ["report.csv"]),
+      text.Contains("Permission \"write\" denied", panicky(() -> Download(() -> Click("#export", p), "/report.csv", p))),
+      Download(() -> Click("h1", p), "$dir/none.csv", p, timeout = 0.2).Error.Kind == "timeout",
+      value.Equal(sys.List(dir)?, ["report.csv"])])
+  end)
+end
+
+defn isUntrustedMessages()
+  (** A message of Firefox is read as any input: a download path out of its folder is refused before any move, and an
+      answer or an entry of the console that lacks its fields gives an Err or an empty entry, never a panic. *)
+  folder = "/home/ana/.cesia/firefox/profile-1/downloads-1"
+  out(path) = saved({status: "complete", filepath: path, url: "http://x/"}, folder, ".cesia/firefox/profile-1/downloads-1", "never.csv").Error.Message
+  list.All([
+    text.StartsWith("Firefox saved the download out of its folder", out("/home/ana/.bashrc")),
+    text.StartsWith("Firefox saved the download out of its folder", out("$folder/../../prefs.js")),
+    text.StartsWith("Firefox saved the download out of its folder", out("$folder/a/b.csv")),
+    text.StartsWith("Firefox saved the download out of its folder", out("$folder/..")),
+    saved({status: "canceled"}, folder, "x", "y").Error.Kind == "browser",
+    value.Equal(answer({}).Error, {Kind: "browser", Code: "unknown error", Message: ""}),
+    value.Equal(answer({type: "success"}).Value, {}),
+    value.Equal(entry({}), {Type: "log", Text: ""}),
+    value.Equal(entry({type: "javascript", text: 3}), {Type: "exception", Text: ""}),
+    value.Equal(requestOf({request: 5}), {}),
+    value.Equal(requestOf({request: {url: "u"}}), {url: "u"})])
+end

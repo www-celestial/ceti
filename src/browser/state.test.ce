@@ -1,0 +1,118 @@
+(* Frames, the state of a session, emulation, PDF and the screenshot of an element, in headless Firefox against
+   tests/pages, which each test serves itself. The tests start Firefox in a kept folder of their own. *)
+use std/dict
+use std/fiber
+use std/http
+use std/json
+use std/list
+use std/net
+use std/result
+use std/text
+use std/value
+
+kept = ".cesia/firefox/state"
+
+defn page(name, f)
+  (** f(p, site) on a new page at tests/pages/name, in a new Firefox. *)
+  l = net.Listen(0)?
+  fiber.Spawn(() -> http.Serve(http.App() then http.Static("/", "tests/pages"), listener = l))
+  site = "http://127.0.0.1:$(net.Port(l))"
+  Firefox(defn (b)
+    p = NewPage(b)?
+    Go("$site/$name", p)?
+    f(p, site)
+  end, kept)
+end
+
+panics(f) = fiber.Wait(fiber.Spawn(f)).Error.Message   (* The message of the panic of f(), or missing. *)
+
+defn isFrames()
+  page("frames.html", defn (p, site)
+    pay = Frame("#pay", p)?
+    Type(ByLabel("Card number"), "4242", pay)?
+    Click(ByRole("button", name = "Pay"), pay)?
+    other = Frame("#other", p)?
+    list.All([
+      Text("#paid", pay)? == "paid 4242",
+      Text("#paid", p, timeout = 0).Error.Kind == "timeout",
+      text.StartsWith("localhost:", Eval("location.host", other)?),
+      Text(ByLabel("Card number"), other)? == "",
+      text.Contains("is no frame", panics(() -> Frame("h1", p))),
+      text.Contains("not a frame", panics(() -> ClosePage(pay)))])
+  end)
+end
+
+defn isState()
+  (** The state of a signed-in page, through JSON, gives a new page the same cookies and localStorage, and the server
+      sees no request for it; a page without it has none. *)
+  roots = fiber.Channel(size = 10)
+  root = defn (r)
+    fiber.Send(1, roots)
+    http.Plain("root")
+  end
+  l = net.Listen(0)?
+  fiber.Spawn(() -> http.Serve(http.App() then http.Get("/", root) then http.Static("/", "tests/pages"), listener = l))
+  site = "http://127.0.0.1:$(net.Port(l))"
+  Firefox(defn (b)
+    p = NewPage(b)?
+    Go("$site/form.html", p)?
+    _ = Eval("document.cookie = 'sid=abc; max-age=3600'; document.cookie = 'theme=dark'; localStorage.setItem('token', 't1')", p)?
+    s = result.Unwrap(json.Parse(json.Text(State(p)?)))
+    q = NewPage(b, state = s)?
+    blank = Eval("location.href", q)?
+    Go("$site/form.html", q)?
+    fresh = NewPage(b)?
+    Go("$site/form.html", fresh)?
+    list.All([
+      value.Equal(list.Sort([c.Name for c in s.Cookies]), ["sid", "theme"]),
+      value.Equal(dict.Get(site, s.Storage), {token: "t1"}),
+      blank == "about:blank",
+      Eval("document.cookie", q)? == "sid=abc; theme=dark",
+      Eval("localStorage.getItem('token')", q)? == "t1",
+      Eval("document.cookie", fresh)? == "",
+      result.IsErr(fiber.Receive(roots, timeout = 0)),
+      NewPage(b, state = {Cookies: [], Storage: {"file:///etc": {}}}).Error.Kind == "browser"])
+  end, kept)
+end
+
+(* The place that a page gets, or the code of its error. *)
+geo = "new Promise((r) => navigator.geolocation.getCurrentPosition((x) => r([x.coords.latitude, x.coords.longitude]), (e) => r('error ' + e.code), {timeout: 3000}))"
+online = "fetch('/form.html').then(() => 'online', () => 'offline')"
+
+defn isEmulate()
+  page("form.html", defn (p, site)
+    Emulate(p, viewport = [390, 844], scale = 3, locale = "fr-FR", timezone = "Asia/Tokyo")?
+    seen = Eval("[innerWidth, innerHeight, devicePixelRatio, navigator.language, Intl.NumberFormat().resolvedOptions().locale, Intl.DateTimeFormat().resolvedOptions().timeZone, new Date(0).getHours()]", p)?
+    nowhere = Eval(geo, p)?
+    Emulate(p, geolocation = [48.8566, 2.3522])?
+    here = Eval(geo, p)?
+    Emulate(p, offline = true)?
+    off = Eval(online, p)?
+    Emulate(p, offline = false)?
+    tab = NewTab(p)?
+    Go("$site/form.html", tab)?
+    list.All([
+      value.Equal(seen, [390, 844, 3, "fr-FR", "fr-FR", "Asia/Tokyo", 9]),
+      nowhere == "error 2",
+      value.Equal(here, [48.8566, 2.3522]),
+      off == "offline" and Eval(online, p)? == "online",
+      value.Equal(Eval("[innerWidth, Intl.DateTimeFormat().resolvedOptions().timeZone]", tab)?, [390, "Asia/Tokyo"]),
+      Emulate(p, timezone = "Mars/Olympus").Error.Kind == "browser"])
+  end)
+end
+
+defn isPdfAndElementShot()
+  page("long.html", defn (p, site)
+    png = text.FromBytes([137, 80, 78, 71, 13, 10, 26, 10])
+    size(image) = [list.Reduce((n, b) -> n * 256 + b, 0, text.Bytes(text.ByteSlice(k, k + 3, image))) for k in [17, 21]]
+    far = Screenshot(p, of = "#far")?
+    head = Screenshot(p, of = ByRole("heading", name = "Long"))?
+    pdf = Pdf(p)?
+    list.All([
+      text.StartsWith(png, far) and text.StartsWith(png, head),
+      size(far)[2] < 100 and size(head)[1] > size(far)[1],
+      Eval("scrollY", p)? == 0,
+      text.StartsWith("%PDF-", pdf),
+      Screenshot(p, of = "#nothing", timeout = 0.1).Error.Kind == "timeout"])
+  end)
+end

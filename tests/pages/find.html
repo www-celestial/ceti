@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Find</title>
+<style>body { font: 16px sans-serif; margin: 2em }</style></head>
+<body>
+<h1>Find</h1>
+<button id="b1">Save</button> <button id="b2">Save draft</button> <button id="b3">SAVE ALL</button>
+<label for="email">Email address</label> <input id="email" type="email">
+<label>Full name <input id="name" type="text" value="old"></label>
+<input id="q" type="search" placeholder="Search the shop">
+<p data-testid="status">idle</p>
+<input id="agree" type="checkbox" aria-label="I agree">
+<select id="size" aria-label="Size"><option>Small</option><option selected>Medium</option></select>
+<table>
+  <tr><th>Item</th><th>Price</th><th></th></tr>
+  <tr><td><span>Tea</span></td><td>2</td><td><button class="buy">Buy</button></td></tr>
+  <tr><td><span>Coffee</span></td><td>3</td><td><button class="buy">Buy</button></td></tr>
+</table>
+<my-card id="card"></my-card>
+<p id="said"></p>
+<script>
+const said = (t) => { document.getElementById('said').textContent = t; };
+customElements.define('my-card', class extends HTMLElement {
+  constructor() { super(); this.attachShadow({mode: 'open'}).innerHTML = '<button>Shadow button</button>'; }
+  connectedCallback() { this.shadowRoot.querySelector('button').addEventListener('click', () => said('shadow clicked')); }
+});
+for (const b of document.querySelectorAll('.buy')) b.addEventListener('click', () => said('bought ' + b.closest('tr').querySelector('span').textContent));
+for (const b of document.querySelectorAll('button[id]')) b.addEventListener('click', () => said('clicked ' + b.textContent));
+setTimeout(() => {
+  const b = document.createElement('button');
+  b.textContent = 'Late one';
+  b.addEventListener('click', () => said('late clicked'));
+  document.body.append(b);
+}, 300);
+</script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+(* What a page keeps of its person: the cookies of its user context and its storage, saved as plain data and given to
+   a new page. *)
+use std/dict
+use std/encode
+use std/json
+use std/result
+use std/text
+use std/value
+
+(* The localStorage of the page's origin, as [origin, items], and its writing, in the page. *)
+storageJs = "() => [location.origin, Object.fromEntries(Object.entries(localStorage))]"
+storeJs = "(items) => { for (const [k, v] of Object.entries(JSON.parse(items))) localStorage.setItem(k, v); }"
+
+defn State(p)
+  (** What p's user context keeps of its person, as plain data that json.Text saves and json.Parse reads back: an Ok of
+      {Cookies, Storage}, Cookies the list of its cookies, each {Name, Value, Domain, Path, HttpOnly, Secure, SameSite,
+      Expires}, Expires in seconds since 1970 or missing for a cookie of the session, and Storage the localStorage of the
+      page's origin, {origin: {key: value}}. BiDi reads no localStorage of another origin. NewPage(b, state = s) starts a
+      page with it. *)
+  got = call("storage.getCookies", {partition: {type: "storageKey", userContext: p.userContext}}, p.session)?
+  cookies = [{Name: c.name, Value: textOf(c.value)?, Domain: c.domain, Path: c.path, HttpOnly: c.httpOnly, Secure: c.secure,
+    SameSite: c.sameSite, Expires: dict.GetOr("expiry", missing, c)} for c in got.cookies]
+  here = fromRemote(callFunction(storageJs, [], p, answerTime)?)?
+  storage = if text.StartsWith("http", here[1]) dict.Put(here[1], here[2], dict.Dict()) else dict.Dict() end
+  result.Ok({Cookies: cookies, Storage: storage})
+end
+
+textOf(v) = if v.type == "base64" encode.Unbase64(v.value) else result.Ok(v.value) end   (* A BytesValue of BiDi as a text. *)
+
+defn restore(state, p)
+  (** Gives a new page the state that State gave: its cookies, then, for each origin, its localStorage, written in an
+      empty page of that origin that Ceti answers itself, so that no server sees the request; the page is then left on
+      about:blank. Ok(missing), or an Err. *)
+  s = p.session
+  for c in state.Cookies
+    cookie = {name: c.Name, value: {type: "string", value: c.Value}, domain: c.Domain, path: c.Path, httpOnly: c.HttpOnly, secure: c.Secure, sameSite: c.SameSite}
+    cookie = if value.IsMissing(dict.GetOr("Expires", missing, c)) cookie else dict.Put("expiry", c.Expires, cookie) end
+    call("storage.setCookie", {cookie: cookie, partition: {type: "storageKey", userContext: p.userContext}}, s)?
+  end
+  origins = dict.Keys(state.Storage)
+  if value.Len(origins) == 0
+    return result.Ok(missing)
+  end
+  sub = call("session.subscribe", {events: ["network.beforeRequestSent"], contexts: [p.context]}, s)?.subscription
+  intercept = call("network.addIntercept", {phases: ["beforeRequestSent"], contexts: [p.context]}, s)?.intercept
+  empty = {type: "string", value: "<!doctype html><title></title>"}
+  blank(e) = call("network.provideResponse", {request: e.request.request, statusCode: 200, body: empty, headers: [{name: "content-type", value: {type: "string", value: "text/html"}}]}, s)
+  id = watch(["network.beforeRequestSent"], e -> dict.GetOr("isBlocked", false, e) == true and dict.GetOr("context", "", e) == p.context, blank, s, once = false, only = true)?
+  wrote = result.Ok(missing)
+  for origin in origins
+    if result.IsOk(wrote)
+      wrote = if not text.StartsWith("http://", origin) and not text.StartsWith("https://", origin)
+        result.Err({Kind: "browser", Message: "NewPage: $origin is no origin of http or https."})
+      else
+        write(origin, state.Storage[origin], p)
+      end
+    end
+  end
+  unwatch(id, s)
+  _ = call("network.removeIntercept", {intercept: intercept}, s)
+  _ = call("session.unsubscribe", {subscriptions: [sub]}, s)
+  wrote?
+  call("browsingContext.navigate", {context: p.context, url: "about:blank", wait: "complete"}, s)?
+  result.Ok(missing)
+end
+
+defn write(origin, items, p)
+  (** Writes the items of localStorage of an origin, in an empty page of it. *)
+  call("browsingContext.navigate", {context: p.context, url: "$origin/", wait: "complete"}, p.session)?
+  callFunction(storeJs, [json.Text(items)], p, answerTime)?
+  result.Ok(missing)
+end

@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Frames</title><style>body { font: 16px sans-serif; margin: 2em }</style></head>
+<body>
+<h1>Frames</h1>
+<iframe id="pay" src="frame-inner.html" style="width: 400px; height: 150px"></iframe>
+<iframe id="other" style="width: 400px; height: 150px"></iframe>
+<script>document.getElementById('other').src = 'http://localhost:' + location.port + '/frame-inner.html';</script>
+</body>
+</html>

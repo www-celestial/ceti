@@ -1,0 +1,207 @@
+(* Locators, forms and the pointer, in headless Firefox against tests/pages, which each test serves itself. The tests
+   start Firefox in a kept folder of their own beside the one of tests/browser.test.ce, which runs at the same time. This
+   file sees the private names of the package, so it can ask Firefox's own accessibility tree through raw BiDi. *)
+use std/dict
+use std/fiber
+use std/http
+use std/list
+use std/net
+use std/result
+use std/text
+use std/value
+
+kept = ".cesia/firefox/locate"
+
+defn site()
+  (** The address of tests/pages, served by this test on a free port. *)
+  l = net.Listen(0)?
+  fiber.Spawn(() -> http.Serve(http.App() then http.Static("/", "tests/pages"), listener = l))
+  result.Ok("http://127.0.0.1:$(net.Port(l))")
+end
+
+defn at(page, f)
+  (** f(p) on a new page at tests/pages/page, in a new Firefox. *)
+  url = "$(site()?)/$page"
+  Firefox(defn (b)
+    p = NewPage(b)?
+    Go(url, p)?
+    f(p)
+  end, kept)
+end
+
+panicked(f) = fiber.Wait(fiber.Spawn(f)).Error.Message   (* The message of the panic of f(), or missing. *)
+
+defn idOf(node)
+  (** The id of a node as BiDi gives it, or "". *)
+  dict.GetOr("id", "", node.value.attributes)
+end
+
+defn isRolesAsFirefoxSees()
+  (** For each element of roles.html that says its role and its name (data-role, data-name), Firefox's own accessibility
+      tree finds it by them (the BiDi locator "accessibility"), and so does ByRole with exact = true: the first element
+      it finds is that one. The hidden ones are found by neither. Firefox says image for img, the name of ARIA 1.2. *)
+  at("roles.html", defn (p)
+    cases = Eval("[...document.querySelectorAll('[data-role]')].map((e) => [e.id, e.dataset.role, e.dataset.name])", p)?
+    wrong = []
+    for c in cases
+      name = if c[3] == "" missing else c[3] end
+      role = if c[2] == "img" "image" else c[2] end
+      asked = if value.IsMissing(name) {role: role} else {role: role, name: name} end
+      firefox = [idOf(n) for n in call("browsingContext.locateNodes", {context: p.context, locator: {type: "accessibility", value: asked}}, p.session)?.nodes]
+      mine = seek(ByRole(c[2], name = name, exact = true), "node", p, 0)
+      found = if result.IsOk(mine) idOf(mine.Value) else "none" end
+      if not (c[1] in firefox) or found != c[1]
+        wrong = list.Append({Id: c[1], Firefox: firefox, Ceti: found}, wrong)
+      end
+    end
+    hidden = [kindOf(WaitFor(ByRole("button", name = n), p, timeout = 0)) for n in ["Gone", "Hidden from readers"]]
+    if value.Len(wrong) == 0 and value.Equal(hidden, ["timeout", "timeout"]) true else result.Err("$wrong $hidden") end
+  end)
+end
+
+kindOf(r) = r.Error.Kind
+
+defn isLocators()
+  at("find.html", defn (p)
+    list.All([
+      Text(ByRole("button", name = "save draft"), p)? == "Save draft",
+      Text(ByRole("button", name = "Save", exact = true), p)? == "Save",
+      value.Equal(Texts(ByRole("button", name = "save"), p)?, ["Save", "Save draft", "SAVE ALL"]),
+      value.Equal(Texts(ByRole("button", name = "save", exact = true), p)?, []),
+      Text(ByTestId("status"), p)? == "idle",
+      Text(ByText("coffee"), p)? == "Coffee",
+      Text(ByText("Coffee", exact = true), p)? == "Coffee",
+      Text(ByRole("row", name = "coffee 3"), p)? == "Coffee\t3\tBuy",
+      Text("h1", p)? == "Find"])
+  end)
+end
+
+defn isLocatorsAct()
+  at("find.html", defn (p)
+    Type(ByLabel("email"), "ana@example.com", p)?
+    Type(ByLabel("Full name", exact = true), "Ana", p)?
+    Type(ByPlaceholder("search"), "tea", p)?
+    Click(Within(ByRole("row", name = "Coffee"), ByRole("button", name = "Buy")), p)?
+    bought = Text("#said", p)?
+    Click(ByRole("button", name = "Shadow button"), p)?
+    shadow = Text("#said", p)?
+    Click(ByRole("button", name = "Late one"), p)?
+    list.All([
+      Value("#email", p)? == "ana@example.com",
+      Value(ByLabel("Full name"), p)? == "Ana",
+      Value(ByPlaceholder("Search the shop", exact = true), p)? == "tea",
+      Value(ByLabel("I agree"), p)? == false,
+      Value(ByLabel("Size"), p)? == "Medium",
+      bought == "bought Coffee",
+      shadow == "shadow clicked",
+      Text("#said", p)? == "late clicked"])
+  end)
+end
+
+defn isLocatorErrors()
+  at("find.html", defn (p)
+    list.All([
+      WaitFor(ByRole("button", name = "Nope"), p, timeout = 0.1).Error.Message == "role button named \"Nope\": no element matches after 0.1 s",
+      Click(Within("table", ByText("Milk")), p, timeout = 0.1).Error.Message == "text \"Milk\" within table: no element matches after 0.1 s",
+      text.Contains("\"buton\" is no ARIA role", panicked(() -> ByRole("buton"))),
+      text.Contains("is no CSS selector", panicked(() -> Click(Within("div[", ByText("x")), p))),
+      text.Contains("is no field", panicked(() -> Value("h1", p)))])
+  end)
+end
+defn isSelect()
+  at("forms.html", defn (p)
+    Select(ByLabel("Country"), "Italy", p)?
+    Select("#fruits", ["Apple", "Plum"], p)?
+    Select(ByLabel("Late"), "Later", p)?
+    list.All([
+      Value(ByLabel("Country"), p)? == "Italy",
+      Eval("document.getElementById('country').value", p)? == "it",
+      value.Equal(Value("#fruits", p)?, ["Apple", "Plum"]),
+      Value("#late", p)? == "Later",
+      Text("#said", p)? == "country it;fruits;",
+      Select("#country", "Germany", p, timeout = 0.1).Error.Message == "#country: no option \"Germany\" after 0.1 s",
+      text.Contains("takes one option, and 2 were given", panicked(() -> Select("#country", ["France", "Spain"], p))),
+      text.Contains("is no select", panicked(() -> Select("h1", "x", p)))])
+  end)
+end
+
+defn isCheck()
+  at("forms.html", defn (p)
+    Check(ByLabel("I agree"), p)?
+    Check(ByLabel("I agree"), p)?
+    Uncheck("#news", p)?
+    Check(ByLabel("Fast"), p)?
+    Check(ByRole("switch", name = "Dark mode"), p)?
+    list.All([
+      Value("#agree", p)? == true,
+      Value("#news", p)? == false,
+      Value("#fast", p)? == true,
+      Value("#slow", p)? == false,
+      Value("#dark", p)? == true,
+      text.Contains("never unchecks", panicked(() -> Uncheck("#fast", p))),
+      text.Contains("is no checkbox or radio", panicked(() -> Check("h1", p)))])
+  end)
+end
+
+defn isUpload()
+  at("forms.html", defn (p)
+    Upload(ByLabel("Photo"), ["tests/pages/report.csv", "tests/pages/form.html"], p)?
+    files = Text("#said", p)?
+    Upload("#photo", [], p)?
+    list.All([
+      text.StartsWith("files report.csv:14,form.html:", files),
+      Eval("document.getElementById('photo').files.length", p)? == 0,
+      Upload("#photo", "tests/pages", p).Error.Message == "Upload: tests/pages is no file.",
+      text.Contains("Permission \"read\" denied for /etc/hostname", panicked(() -> Upload("#photo", "/etc/hostname", p))),
+      text.Contains("is no file field", panicked(() -> Upload("h1", [], p)))])
+  end)
+end
+
+defn isTypeWithoutKeys()
+  at("forms.html", defn (p)
+    Type(ByLabel("Day"), "2026-03-15", p)?
+    Type("#hue", "#ff0000", p)?
+    list.All([
+      Value("#day", p)? == "2026-03-15",
+      Value("#hue", p)? == "#ff0000",
+      Text("#said", p)? == "day 2026-03-15;",
+      text.Contains("takes no value \"tomorrow\"", panicked(() -> Type("#day", "tomorrow", p)))])
+  end)
+end
+
+
+defn isHereOf()
+  (** The current folder from the absolute path of a profile that Firefox gives and the path that Ceti gave it. *)
+  list.All([
+    hereOf("/home/ana/shop/.cesia/firefox/profile-1", ".cesia/firefox/profile-1") == "/home/ana/shop",
+    hereOf("/home/ana/shop/work/profile-1", "./work//profile-1") == "/home/ana/shop",
+    value.IsMissing(hereOf("/tmp/t/profile-1", "/tmp/t/profile-1")),
+    value.IsMissing(hereOf("/home/ana/x/profile-1", "../x/profile-1")),
+    value.IsMissing(hereOf(missing, "work/profile-1")),
+    value.IsMissing(hereOf("/elsewhere/profile-1", "work/profile-1"))])
+end
+defn isPointer()
+  at("pointer.html", defn (p)
+    Hover("#menu", p)?
+    tip = Text("#tip", p, timeout = 1)?
+    Drag(ByText("Task 1"), ByText("Task 3"), p)?
+    order = Text("#said", p)?
+    Wheel("#box", 300, p)?
+    inside = Eval("document.getElementById('box').scrollTop", p)?
+    Wheel("h1", 500, p)?
+    list.All([tip == "A tip", order == "Task 2, Task 3, Task 1", inside == 300, Eval("scrollY", p)? == 500])
+  end)
+end
+
+defn isPageCantChangeCeti()
+  (** A page that breaks JSON.parse, querySelectorAll, MutationObserver and requestAnimationFrame in its own realm
+      changes nothing for Ceti, whose finder runs in a sandbox that sees the DOM and not the page's scripts. *)
+  at("find.html", defn (p)
+    _ = Eval("JSON.parse = () => { throw new Error('no'); }; Document.prototype.querySelectorAll = () => []; Element.prototype.querySelectorAll = () => []; window.MutationObserver = null; window.requestAnimationFrame = null; 1", p)?
+    Click("#b1", p)?
+    list.All([
+      Text("#said", p)? == "clicked Save",
+      Text(ByRole("button", name = "Late one"), p)? == "Late one",
+      value.Equal(Texts(ByTestId("status"), p)?, ["idle"])])
+  end)
+end

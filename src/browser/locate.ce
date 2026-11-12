@@ -1,0 +1,36 @@
+(* Locators: the ways to name an element as a person finds it, beside a CSS selector, which stays a text. Each is a
+   dictionary that the page reads as JSON (finder.ce), with Says, the words that an error uses for it. *)
+use std/bug
+use std/text
+use std/value
+
+(* The roles of WAI-ARIA 1.2, each between spaces. *)
+ariaRoles = " alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox complementary contentinfo definition deletion dialog directory document emphasis feed figure form generic grid gridcell group heading img insertion link list listbox listitem log main mark marquee math menu menubar menuitem menuitemcheckbox menuitemradio meter navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status strong subscript superscript switch tab table tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem "
+
+defn ByRole(role, name = missing, exact = false)
+  (** The elements of an ARIA role, as "button", "link", "textbox", "checkbox", "heading" or "row", whether the page
+      writes the role or the element has it by itself (a <button> is a button, an <a href> a link). With name, only
+      those whose accessible name holds it, the name a screen reader says: their label, aria-label, alt, or their text
+      for a button, a link, a heading or a cell. Case and runs of spaces don't count; exact = true asks for the whole
+      name, case kept. An element that aria-hidden hides isn't one. A role that ARIA doesn't have is a bug, so it panics
+      with the roles.
+
+        ByRole("button", name = "Save").Says --> "role button named \"Save\"" *)
+  if not text.Contains(" $role ", ariaRoles)
+    bug.Panic("ByRole: \"$role\" is no ARIA role. The roles are:$ariaRoles")
+  end
+  {By: "role", Role: role, Name: name, Exact: exact, Says: if value.IsMissing(name) "role $role" else "role $role named \"$name\"" end}
+end
+
+ByLabel(label, exact = false) = {By: "label", Text: label, Exact: exact, Says: "label \"$label\""}   (** The fields that a label names: a <label> of the field, by its for or around it, an element that aria-labelledby names, or aria-label. Case and runs of spaces don't count, and a part of the label is enough; exact = true asks for the whole label, case kept. *)
+
+ByText(words, exact = false) = {By: "text", Text: words, Exact: exact, Says: "text \"$words\""}   (** The elements whose text holds words, the innermost of them: in <li><span>Tea</span> 2 €</li>, ByText("Tea") is the span. Case and runs of spaces don't count; exact = true asks for the whole text, case kept. *)
+
+ByPlaceholder(words, exact = false) = {By: "placeholder", Text: words, Exact: exact, Says: "placeholder \"$words\""}   (** The fields whose placeholder, the grey example written in an empty field, holds words. Case and runs of spaces don't count; exact = true asks for the whole placeholder, case kept. *)
+
+ByTestId(id) = {By: "testid", Id: id, Says: "test id \"$id\""}   (** The elements whose data-testid attribute is id, exactly: a name that a page gives its elements for its tests. *)
+
+Within(container, inner) = {By: "within", Container: container, Inner: inner, Says: "$(says(inner)) within $(says(container))"}   (** What inner finds inside what container finds, each a CSS selector or a locator: Within(ByRole("row", name = "Coffee"), ByRole("button", name = "Buy")) is the Buy button of the row of Coffee. *)
+
+(* The words for a selector or a locator in an error. *)
+says(sel) = if value.IsText(sel) sel else sel.Says end
