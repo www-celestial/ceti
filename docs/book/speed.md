@@ -67,9 +67,10 @@ for `io.Print(1)`, so +4.5 ms, 95% interval [+4.4, +4.7] (21 runs of each, alter
 it uses (the WebSocket client, std/encode, std/json) and 2.4 ms for its own code. It is a fifth of a percent of the
 2.4 s that Firefox then takes to be ready.
 
-The template profile added about 100 lines to Ceti: a program that uses it starts 0.33 ms later, 95% interval
-[+0.17, +0.44] (8.6 ms against 8.3 ms for v1, on 12 November, 21 runs of each, alternated), against 1.1 s saved at each
-start of Firefox.
+The template profile added about 60 lines of code to Ceti: a program that uses it starts 0.18 ms later, 95% interval
+[+0.06, +0.41] (8.40 ms against 8.22 ms for v1, on 12 November, 21 runs of each, alternated), against 1.1 s saved at
+each start of Firefox. Cesia compiles a function at its first call, but reads, parses and resolves every line of a
+package when a program loads it: the cost follows the lines of code, and comments cost nothing.
 
 ## The template profile
 
