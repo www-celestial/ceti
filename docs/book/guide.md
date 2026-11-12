@@ -116,10 +116,59 @@ have loaded. An address that can't be reached is an `Err` of the kind `"browser"
 
 ## Finding an element
 
-An element is named by a **CSS selector**, the language of style sheets for naming elements: `#go` is the element whose
-id is `go`, `.item` each element of the class `item`, `form input[type=email]` each email field in a form. It is the only
-way to name an element, and it works in every browser. A selector that isn't CSS, as `div[`, is a bug of the program: the
-function panics, and the message names the selector.
+Every function that looks for an element takes a **selector**: a CSS text, or a **locator**, which names the element as
+a person finds it on the screen.
+
+A text is always a **CSS selector**, the language of style sheets for naming elements: `#go` is the element whose id is
+`go`, `.item` each element of the class `item`, `form input[type=email]` each email field in a form. A selector that
+isn't CSS, as `div[`, is a bug of the program: the function panics, and the message names the selector.
+
+A locator is made by one of these functions:
+
+| Locator | What it finds |
+|---|---|
+| `browser.ByRole(role, name = missing, exact = false)` | the elements of an ARIA role, with that accessible name |
+| `browser.ByLabel(text, exact = false)` | the fields that a label names |
+| `browser.ByText(text, exact = false)` | the innermost elements whose text holds `text` |
+| `browser.ByPlaceholder(text, exact = false)` | the fields whose placeholder holds `text` |
+| `browser.ByTestId(id)` | the elements whose `data-testid` is `id` |
+| `browser.Within(container, inner)` | what `inner` finds inside what `container` finds |
+
+```cesia norun
+defn signIn(p)
+  browser.Type(browser.ByLabel("Email"), "ana@example.com", p)?
+  browser.Type(browser.ByLabel("Password"), "secret", p)?
+  browser.Click(browser.ByRole("button", name = "Sign in"), p)
+end
+```
+
+A test written so reads as the page does for a person, and goes on passing when the page changes its ids or its classes.
+
+**Roles and names.** A **role** is what an element is to a screen reader, a program that reads the page aloud: a
+`button`, a `link`, a `textbox`, a `checkbox`, a `heading`, a `row`. An element has one by itself, a `<button>` is a
+button and an `<a href>` a link, or by the `role` attribute that the page writes. Its **accessible name** is what a screen
+reader says of it: the `aria-labelledby` or the `aria-label` the page gives it, else the label of a field, the `alt` of an
+image, or, for a button, a link, a heading, a cell or a row, its text, else its `title` or its `placeholder`. Ceti
+computes both in the page, after the W3C texts WAI-ARIA 1.2, HTML-AAM (the roles of HTML elements) and *Accessible Name
+and Description Computation 1.2*; its tests check them against Firefox's own accessibility tree, for some forty kinds of
+elements. Two notes: a password field has no role, as HTML-AAM says, so find it by its label; and the rows of a table are
+named by their text, as ARIA 1.2 says, which Firefox doesn't do itself.
+
+**Matching.** With `name`, a part of the name is enough, and case and runs of spaces don't count: `name = "save"` finds
+"Save" and "Save draft". `exact = true` asks for the whole name, case kept. `ByLabel`, `ByText` and `ByPlaceholder`
+match in the same way. An element that `aria-hidden="true"` hides from screen readers isn't found by `ByRole`, and a role
+that ARIA doesn't have, as `"buton"`, is a bug: the function panics with the list of roles.
+
+**Within.** `browser.Within` looks inside other elements: the Buy button of the row of Coffee, in a table where each row
+has its own Buy button:
+
+```cesia norun
+buyCoffee(p) = browser.Click(browser.Within(browser.ByRole("row", name = "Coffee"), browser.ByRole("button", name = "Buy")), p)
+```
+
+Locators look inside the shadow roots of the page as well, the hidden trees of web components; a CSS text looks in the
+document only, as `querySelectorAll` does. An error names the locator in words, as `role button named "Save": no element
+matches after 5 s`.
 
 ### Waiting by itself
 
@@ -196,6 +245,14 @@ as one in `display: none`, gives its text as the source holds it.
 
 ```cesia norun
 items(p) = browser.Texts(".item", p)   (* Ok(["one", "two", "three"]) *)
+```
+
+`browser.Value` gives what a field holds, shown or not: the text of an `input` or a `textarea`, `true` or `false` for a
+checkbox or a radio, the label of the chosen option of a `<select>`, or a list of them for a select that takes several.
+It waits until the field is there:
+
+```cesia norun
+quantity(p) = browser.Value(browser.ByLabel("Quantity"), p)   (* Ok("3") *)
 ```
 
 ### Eval

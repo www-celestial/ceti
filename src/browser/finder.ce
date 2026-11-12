@@ -1,55 +1,194 @@
-(* The JavaScript that the pages run, as texts: script.callFunction sends one with its arguments (W3C WebDriver BiDi
-   §7.6.4.3), and its promise is awaited in the page, so a wait costs one round trip.
+(* The JavaScript that the pages run, as a text: script.callFunction sends it with its arguments (W3C WebDriver BiDi
+   §7.6.4.3), and its promise is awaited in the page, so a wait costs one round trip. A text costs nothing when a
+   program loads Ceti, so the waits and the matching live here.
 
-   seek(selector, mode, ms) looks for the first element that the selector matches and that can be used: attached to
-   the document (querySelectorAll finds no other), its box not empty, not visibility: hidden, and for "click" and "type"
-   not disabled, for "type" not read-only. It looks again at each frame (requestAnimationFrame) and at each change of the
-   DOM (MutationObserver), until ms milliseconds have passed; an element there at once is given at once, with no
-   promise and no watcher. Then, by mode:
-     "show"   gives {ok: true}
-     "text"   gives {text}, the element's innerText
-     "click"  scrolls the element to the middle of the viewport if its centre is out of it, and gives the element
-     "type"   scrolls it in the same way, gives it the focus, selects what it holds, and gives {ok: true}
+   seek(q, mode, ms, arg): q is the selector as JSON, a CSS text or a locator of locate.ce. It looks for the first
+   element of q that the mode can use: attached to the document; for most modes visible, its box not empty and not
+   visibility: hidden; for "click", "type", "check" and "select" not disabled, for "type" not read-only. It looks again
+   at each frame (requestAnimationFrame) and at each change of the DOM (MutationObserver), until ms milliseconds have
+   passed; an element there at once is given at once, with no promise and no watcher. Then, by mode:
+     "show"     {ok: true}
+     "text"     {text}, the element's innerText
+     "texts"    the innerText of every element of q, at once, with no wait
+     "click"    scrolls the element to the middle of the viewport if its centre is out of it, and gives the element
+     "point"    the same, for an element that may be disabled
+     "wheel"    the same, but scrolls only an element that is wholly out of the viewport
+     "node"     the element, where it is
+     "type"     scrolls it, gives it the focus and selects what it holds: {ok: true}; for an input of a type that takes
+                no keys, as date, it sets the value to arg and sends input and change: {set: true}
+     "value"    {value}: the text of a field, the state of a checkbox or a radio, the label of the chosen option of a
+                select, a list for a multiple one; the element may be hidden
+     "check"    arg "true" or "false": {ok: true} when the box is so already, else scrolls it and gives the element
+     "checked"  {ok: true} once the box is as arg says
+     "select"   arg the JSON list of the labels: once the select holds them all, chooses them, sends input and change
+     "file"     the file input, which may be hidden
+     "frame"    the window of an iframe or a frame, once it has one
    It gives {left: true} when the page goes away (pagehide): the caller looks again in the new document. Past ms, it
-   gives {late: true, found, shown, usable}: how many elements matched, were visible, could be used. A selector that
-   isn't CSS gives {bad: message}, and an element that "type" can't type in gives {field: false}. *)
+   gives {late: true, found, shown, usable, why}: how many elements matched, were visible, could be used, and what was
+   missing. A selector that isn't CSS gives {bad: message}, an element that the mode can't use {bug: what it is}.
 
-seekJs = "(selector, mode, ms) => {
-  let found = 0, shown = 0, usable = 0;
+   Roles and names follow WAI-ARIA 1.2, HTML-AAM (the implicit roles of HTML elements) and the W3C Accessible Name and
+   Description Computation 1.2; role="image" of ARIA 1.3 is img, its name in 1.2. The names come from aria-labelledby, aria-label, the labels of a field, alt, the value of a button input, legend,
+   caption and figcaption, the content for the roles named from it, then title and placeholder. *)
+
+seekJs = "(q, mode, ms, arg) => {
+  const sel = JSON.parse(q);
+  let found = 0, shown = 0, usable = 0, why = '';
+  const norm = (s) => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim();
+  const like = (have, want, exact) => exact ? norm(have) === norm(want) : norm(have).toLowerCase().includes(norm(want).toLowerCase());
+  const deep = (root) => {
+    const out = [];
+    const go = (r) => { for (const e of r.querySelectorAll('*')) { out.push(e); if (e.shadowRoot) go(e.shadowRoot); } };
+    if (root.shadowRoot) go(root.shadowRoot);
+    go(root);
+    return out;
+  };
+  const hidden = (e) => !e.checkVisibility({visibilityProperty: true}) || e.closest('[aria-hidden=true]') !== null;
+  const inputRoles = {button: 'button', image: 'button', reset: 'button', submit: 'button', checkbox: 'checkbox', radio: 'radio', range: 'slider', number: 'spinbutton', email: 'textbox', tel: 'textbox', text: 'textbox', url: 'textbox', search: 'searchbox'};
+  const implicit = {article: 'article', aside: 'complementary', blockquote: 'blockquote', button: 'button', caption: 'caption', code: 'code', datalist: 'listbox', dd: 'definition', del: 'deletion', details: 'group', dfn: 'term', dialog: 'dialog', dt: 'term', em: 'emphasis', fieldset: 'group', figure: 'figure', hr: 'separator', html: 'document', ins: 'insertion', li: 'listitem', main: 'main', mark: 'mark', math: 'math', menu: 'list', meter: 'meter', nav: 'navigation', ol: 'list', optgroup: 'group', option: 'option', output: 'status', p: 'paragraph', progress: 'progressbar', search: 'search', strong: 'strong', sub: 'subscript', sup: 'superscript', table: 'table', tbody: 'rowgroup', tfoot: 'rowgroup', thead: 'rowgroup', textarea: 'textbox', time: 'time', tr: 'row', ul: 'list', h1: 'heading', h2: 'heading', h3: 'heading', h4: 'heading', h5: 'heading', h6: 'heading'};
+  const named = (e) => e.hasAttribute('aria-label') || e.hasAttribute('aria-labelledby');
+  const roleOf = (e) => {
+    const r = (e.getAttribute('role') || '').trim().split(/\\s+/)[0];
+    if (r) return r === 'image' ? 'img' : r;
+    const t = e.localName;
+    if (t === 'input') return e.list && /^(text|search|email|tel|url)$/.test(e.type) ? 'combobox' : inputRoles[e.type] || '';
+    if (t === 'a' || t === 'area') return e.hasAttribute('href') ? 'link' : '';
+    if (t === 'img') return e.getAttribute('alt') === '' ? 'presentation' : 'img';
+    if (t === 'select') return e.multiple || e.size > 1 ? 'listbox' : 'combobox';
+    if (t === 'header' || t === 'footer') return e.parentElement && e.parentElement.closest('article,aside,main,nav,section') ? '' : t === 'header' ? 'banner' : 'contentinfo';
+    if (t === 'section' || t === 'form') return named(e) ? (t === 'form' ? 'form' : 'region') : '';
+    if (t === 'td') return e.closest('table') && /grid/.test(e.closest('table').getAttribute('role') || '') ? 'gridcell' : 'cell';
+    if (t === 'th') return e.getAttribute('scope') === 'row' ? 'rowheader' : 'columnheader';
+    return implicit[t] || '';
+  };
+  const textOf = (n, skip) => {
+    let out = '';
+    for (const c of n.childNodes) {
+      if (c.nodeType === 3) { out += c.data; continue; }
+      if (c.nodeType !== 1 || c === skip || hidden(c)) continue;
+      const t = c.localName;
+      const s = norm(c.getAttribute('aria-label')) ? c.getAttribute('aria-label')
+        : t === 'img' ? c.getAttribute('alt') || ''
+        : t === 'textarea' || (t === 'input' && inputRoles[c.type] === 'textbox') ? c.value
+        : t === 'select' ? [...c.selectedOptions].map((o) => o.label).join(' ')
+        : textOf(c, skip);
+      out += getComputedStyle(c).display.startsWith('inline') ? s : ' ' + s + ' ';
+    }
+    return out;
+  };
+  const byId = (e, id) => (e.getRootNode().getElementById ? e.getRootNode().getElementById(id) : null) || document.getElementById(id);
+  const labelled = (e) => norm((e.getAttribute('aria-labelledby') || '').split(/\\s+/).map((id) => id && byId(e, id)).filter(Boolean).map((x) => x.getAttribute('aria-label') || textOf(x)).join(' '));
+  const fromContent = /^(button|cell|checkbox|columnheader|gridcell|heading|link|menuitem|menuitemcheckbox|menuitemradio|option|radio|row|rowheader|switch|tab|tooltip|treeitem)$/;
+  const nameOf = (e, role) => {
+    const t = e.localName;
+    const part = (s) => { const x = e.querySelector(':scope > ' + s); return x ? norm(textOf(x)) : ''; };
+    return labelled(e) || norm(e.getAttribute('aria-label'))
+      || (t === 'input' && /^(button|submit|reset|image)$/.test(e.type) ? norm(e.type === 'image' ? e.alt : e.value) : '')
+      || (e.labels ? norm([...e.labels].map((l) => textOf(l, e)).join(' ')) : '')
+      || ((t === 'img' || t === 'area') ? norm(e.getAttribute('alt')) : '')
+      || (t === 'fieldset' ? part('legend') : t === 'table' ? part('caption') : t === 'figure' ? part('figcaption') : '')
+      || (fromContent.test(role) ? norm(textOf(e)) : '')
+      || norm(e.getAttribute('title')) || norm(e.getAttribute('placeholder'));
+  };
+  const labelsOf = (e) => [labelled(e), norm(e.getAttribute('aria-label')), ...(e.labels ? [...e.labels].map((l) => textOf(l, e)) : [])];
+  const find = (s, root) => {
+    if (typeof s === 'string') return [...root.querySelectorAll(s)];
+    if (s.By === 'within') {
+      const out = new Set();
+      for (const c of find(s.Container, root)) for (const e of find(s.Inner, c)) out.add(e);
+      return [...out];
+    }
+    const all = deep(root);
+    if (s.By === 'role') return all.filter((e) => roleOf(e) === s.Role && e.closest('[aria-hidden=true]') === null && (s.Name == null || like(nameOf(e, s.Role), s.Name, s.Exact)));
+    if (s.By === 'label') return all.filter((e) => labelsOf(e).some((l) => l !== '' && like(l, s.Text, s.Exact)));
+    if (s.By === 'placeholder') return all.filter((e) => e.hasAttribute('placeholder') && like(e.getAttribute('placeholder'), s.Text, s.Exact));
+    if (s.By === 'testid') return all.filter((e) => e.getAttribute('data-testid') === s.Id);
+    const hit = new Set(all.filter((e) => !e.closest('head,script,style,template,noscript') && like(e.textContent, s.Text, s.Exact)));
+    return [...hit].filter((e) => ![...e.children].some((c) => hit.has(c)));
+  };
   const visible = (e) => {
     const box = e.getBoundingClientRect();
     return box.width > 0 && box.height > 0 && getComputedStyle(e).visibility !== 'hidden';
   };
   const editable = (e) => e instanceof HTMLTextAreaElement || e instanceof HTMLInputElement || e.isContentEditable;
-  const ready = (e) => mode === 'show' || mode === 'text' || !(e.matches(':disabled') || (mode === 'type' && e.readOnly === true));
-  const bring = (e) => {
+  const loose = /^(value|file|frame|checked)$/.test(mode);
+  const active = /^(click|type|check|select)$/.test(mode);
+  const ready = (e) => !active || !(e.matches(':disabled') || (mode === 'type' && e.readOnly === true));
+  const bring = (e, whole) => {
     const box = e.getBoundingClientRect();
     const x = box.left + box.width / 2, y = box.top + box.height / 2;
-    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) e.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+    const out = whole ? box.right <= 0 || box.bottom <= 0 || box.left >= innerWidth || box.top >= innerHeight : x < 0 || y < 0 || x >= innerWidth || y >= innerHeight;
+    if (out) e.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+  };
+  const box = (e) => e instanceof HTMLInputElement && (e.type === 'checkbox' || e.type === 'radio');
+  const isOn = (e) => box(e) ? e.checked : e.getAttribute('aria-checked') === 'true';
+  const fire = (e) => { e.dispatchEvent(new Event('input', {bubbles: true})); e.dispatchEvent(new Event('change', {bubbles: true})); };
+  const use = (e) => {
+    if (mode === 'show') return {ok: true};
+    if (mode === 'text') return {text: e.innerText};
+    if (mode === 'click' || mode === 'point' || mode === 'wheel') { bring(e, mode === 'wheel'); return e; }
+    if (mode === 'node') return e;
+    if (mode === 'value') {
+      if (e instanceof HTMLSelectElement) return {value: e.multiple ? [...e.selectedOptions].map((o) => o.label) : e.selectedOptions.length ? e.selectedOptions[0].label : null};
+      if (box(e) || e.hasAttribute('aria-checked')) return {value: isOn(e)};
+      if (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement) return {value: e.value};
+      return {bug: 'is no field: an input, a textarea, a select or a checkbox'};
+    }
+    if (mode === 'check' || mode === 'checked') {
+      if (!box(e) && !/^(checkbox|radio|switch|menuitemcheckbox|menuitemradio)$/.test(roleOf(e))) return {bug: 'is no checkbox or radio'};
+      const want = arg === 'true';
+      if (isOn(e) === want) return {ok: true};
+      if (mode === 'checked') { why = want ? 'still unchecked' : 'still checked'; return null; }
+      if (!want && (e.type === 'radio' || roleOf(e) === 'radio')) return {bug: 'is a radio, which a click checks and never unchecks'};
+      bring(e);
+      return e;
+    }
+    if (mode === 'select') {
+      if (!(e instanceof HTMLSelectElement)) return {bug: 'is no select'};
+      const want = JSON.parse(arg);
+      if (want.length > 1 && !e.multiple) return {bug: 'takes one option, and ' + want.length + ' were given'};
+      const chosen = want.map((w) => [...e.options].find((o) => norm(o.label) === norm(w)));
+      const lacking = chosen.indexOf(undefined);
+      if (lacking >= 0) { why = 'no option \"' + want[lacking] + '\"'; return null; }
+      for (const o of e.options) o.selected = chosen.includes(o);
+      fire(e);
+      return {ok: true};
+    }
+    if (mode === 'file') return e instanceof HTMLInputElement && e.type === 'file' ? e : {bug: 'is no file field: an input of type file'};
+    if (mode === 'frame') {
+      if (e.localName !== 'iframe' && e.localName !== 'frame') return {bug: 'is no frame: an iframe or a frame'};
+      return e.contentWindow;
+    }
+    if (!editable(e)) return {field: false};
+    bring(e);
+    e.focus();
+    if (e instanceof HTMLInputElement && /^(date|time|datetime-local|month|week|color|range)$/.test(e.type)) {
+      e.value = arg;
+      if (e.value !== arg) return {bug: 'is an input of type ' + e.type + ', which takes no value \"' + arg + '\"'};
+      fire(e);
+      return {set: true};
+    }
+    if (e.isContentEditable) getSelection().selectAllChildren(e); else e.select();
+    return {ok: true};
   };
   const pick = () => {
     let all;
-    try { all = document.querySelectorAll(selector); } catch (error) { return {bad: String(error.message)}; }
+    try { all = find(sel, document); } catch (error) { return {bad: String(error.message)}; }
+    if (mode === 'texts') return all.map((e) => e.innerText);
     found = all.length; shown = 0; usable = 0;
     for (const e of all) {
-      if (!visible(e)) continue;
+      if (!loose && !visible(e)) continue;
       shown++;
       if (!ready(e)) continue;
       usable++;
-      if (mode === 'show') return {ok: true};
-      if (mode === 'text') return {text: e.innerText};
-      if (mode === 'click') { bring(e); return e; }
-      if (!editable(e)) return {field: false};
-      bring(e);
-      e.focus();
-      if (e.isContentEditable) getSelection().selectAllChildren(e); else e.select();
-      return {ok: true};
+      const got = use(e);
+      if (got !== null) return got;
     }
     return null;
   };
   const now = pick();
   if (now !== null) return now;
-  if (ms <= 0) return {late: true, found, shown, usable};
+  if (ms <= 0) return {late: true, found, shown, usable, why};
   return new Promise((done) => {
     let timer = 0, frame = 0;
     const end = (value) => {
@@ -69,14 +208,7 @@ seekJs = "(selector, mode, ms) => {
     const watcher = new MutationObserver(look);
     addEventListener('pagehide', left);
     watcher.observe(document, {childList: true, subtree: true, attributes: true, characterData: true});
-    timer = setTimeout(() => end({late: true, found, shown, usable}), ms);
+    timer = setTimeout(() => end({late: true, found, shown, usable, why}), ms);
     frame = requestAnimationFrame(look);
   });
-}"
-
-(* The innerText of every element the selector matches, as they are now, or {bad: message} for a selector that isn't
-   CSS. *)
-textsJs = "(selector) => {
-  try { return Array.from(document.querySelectorAll(selector), (e) => e.innerText); }
-  catch (error) { return {bad: String(error.message)}; }
 }"

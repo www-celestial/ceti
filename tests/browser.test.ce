@@ -28,8 +28,9 @@ defn served()
 end
 
 defn others(dir)
-  (** The names in dir besides its templates: the profiles of runs that should have gone. *)
-  result.Ok([name for name in sys.List(dir)? if not text.StartsWith("template-", name)])
+  (** The profiles in dir, and the templates being made, of runs that should have gone; the kept folders of the other
+      test files, which run at the same time, are left out. *)
+  result.Ok([name for name in sys.List(dir)? if text.StartsWith("profile-", name) or text.StartsWith("build-", name)])
 end
 
 defn on(page, f)

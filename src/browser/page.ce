@@ -1,5 +1,6 @@
 (* The pages of a browser: open, go, find, click, type, read, run JavaScript, capture. *)
 use std/encode
+use std/json
 use std/bug
 use std/dict
 use std/fiber
@@ -60,9 +61,9 @@ defn Go(url, p, timeout = DefaultTimeout)
 end
 
 defn Click(selector, p, timeout = DefaultTimeout)
-  (** Waits for the first element of a CSS selector that is visible and not disabled, scrolls it into view, and clicks
-      its centre with the mouse: the events are the browser's own, as a person's click makes them. Ok(missing), or an
-      Err of the kind "timeout". *)
+  (** Waits for the first element of a selector, a CSS text or a locator as ByRole, that is visible and not disabled,
+      scrolls it into view, and clicks its centre with the mouse: the events are the browser's own, as a person's click
+      makes them. Ok(missing), or an Err of the kind "timeout". *)
   node = seek(selector, "click", p, timeout)?
   pointer = [
     {type: "pointerMove", x: 0, y: 0, origin: {type: "element", element: {sharedId: node.sharedId}}},
@@ -72,10 +73,14 @@ defn Click(selector, p, timeout = DefaultTimeout)
 end
 
 defn Type(selector, words, p, timeout = DefaultTimeout)
-  (** Waits for the first field of a CSS selector that is visible, enabled and not read-only, gives it the focus, selects
+  (** Waits for the first field of a selector that is visible, enabled and not read-only, gives it the focus, selects
       what it holds, then types the text key by key: the field then holds the text. An input, a textarea or an element
-      that is contentEditable is a field. Ok(missing), or an Err of the kind "timeout". *)
-  seek(selector, "type", p, timeout)?
+      that is contentEditable is a field. An input of a type that takes no keys, as date, time, datetime-local, month,
+      week, color or range, gets the text as its value, written as HTML writes it ("2026-03-15", "09:30", "#ff0000"),
+      with the events input and change. Ok(missing), or an Err of the kind "timeout". *)
+  if dict.Has("set", seek(selector, "type", p, timeout, arg = words)?)
+    return result.Ok(missing)
+  end
   keys = if words == "" [{type: "keyDown", value: key("Backspace")}, {type: "keyUp", value: key("Backspace")}] else typing(words) end
   act([{type: "key", id: "keyboard", actions: keys}], p)
 end
@@ -88,21 +93,28 @@ defn Press(combo, p)
 end
 
 defn Text(selector, p, timeout = DefaultTimeout)
-  (** The visible text, innerText, of the first visible element of a CSS selector, once there is one: an Ok of the text,
+  (** The visible text, innerText, of the first visible element of a selector, once there is one: an Ok of the text,
       or an Err of the kind "timeout". *)
   found = seek(selector, "text", p, timeout)?
   result.Ok(found.text)
 end
 
 defn Texts(selector, p)
-  (** The innerText of every element of a CSS selector, as they are now, with no wait: an Ok of the list, which is empty
+  (** The innerText of every element of a selector, as they are now, with no wait: an Ok of the list, which is empty
       when none matches, or an Err. An element that isn't shown, as one in display: none, gives its text as the source
       holds it. *)
-  got = callFunction(textsJs, [selector], p, answerTime)?
+  got = callFunction(seekJs, [json.Text(selector), "texts", 0, ""], p, answerTime)?
   if got.type == "object"
-    bug.Panic("$selector is no CSS selector: $(fromRemote(got)?.bad)")
+    bug.Panic("$(says(selector)) is no CSS selector: $(fromRemote(got)?.bad)")
   end
   fromRemote(got)
+end
+
+defn Value(selector, p, timeout = DefaultTimeout)
+  (** What the first field of a selector holds, once there is one, shown or not: the text of an input or a textarea,
+      true or false for a checkbox or a radio, the label of the chosen option of a select, or a list of them for a
+      select that takes several. An Ok of it, or an Err of the kind "timeout". *)
+  result.Ok(seek(selector, "value", p, timeout)?.value)
 end
 
 defn Eval(js, p, timeout = DefaultTimeout)
@@ -126,7 +138,7 @@ defn Screenshot(p, full = false)
 end
 
 defn WaitFor(selector, p, timeout = DefaultTimeout)
-  (** Waits until an element of a CSS selector is visible, at most timeout seconds: Ok(missing), or an Err of the kind
+  (** Waits until an element of a selector is visible, at most timeout seconds: Ok(missing), or an Err of the kind
       "timeout". *)
   seek(selector, "show", p, timeout)?
   result.Ok(missing)
@@ -152,29 +164,32 @@ defn callFunction(js, args, p, wait)
   result.Ok(got.result)
 end
 
-defn seek(selector, mode, p, timeout)
+defn seek(selector, mode, p, timeout, arg = "")
   (** Runs seekJs until it finds its element, looking again in the new document when the page goes away, at most
       timeout seconds: an Ok of what it gave, or an Err of the kind "timeout" that says what it saw. *)
   until = sys.Now() + timeout
+  q = json.Text(selector)
   while true
     left = until - sys.Now()
     left = if left < 0 0 else left end
-    got = callFunction(seekJs, [selector, mode, math.Round(left * 1000)], p, left + margin)?
-    if got.type == "node"
+    got = callFunction(seekJs, [q, mode, math.Round(left * 1000), arg], p, left + margin)?
+    if got.type == "node" or got.type == "window"
       return result.Ok(got)
     end
     seen = fromRemote(got)?
     if dict.Has("bad", seen)
-      bug.Panic("$selector is no CSS selector: $(seen.bad)")
+      bug.Panic("$(says(selector)) is no CSS selector: $(seen.bad)")
+    else if dict.Has("bug", seen)
+      bug.Panic("The first element of $(says(selector)) $(seen.bug).")
     else if dict.Has("field", seen)
-      bug.Panic("Type: the first visible element of $selector is no field: an input, a textarea or a contentEditable element.")
+      bug.Panic("Type: the first visible element of $(says(selector)) is no field: an input, a textarea or a contentEditable element.")
     else if dict.Has("late", seen)
-      return result.Err({Kind: "timeout", Message: "$selector: $(lateness(seen, mode)) after $timeout s"})
+      return result.Err({Kind: "timeout", Message: "$(says(selector)): $(lateness(seen, mode)) after $timeout s"})
     else if not dict.Has("left", seen)
       return result.Ok(seen)
     end
     if sys.Now() >= until
-      return result.Err({Kind: "timeout", Message: "$selector: the page went away and none came back after $timeout s"})
+      return result.Err({Kind: "timeout", Message: "$(says(selector)): the page went away and none came back after $timeout s"})
     end
   end
 end
@@ -183,6 +198,8 @@ defn lateness(seen, mode)
   (** What a wait saw at its end, in words. *)
   if seen.found == 0
     "no element matches"
+  else if seen.why != ""
+    seen.why
   else if seen.shown == 0
     "no visible element ($(seen.found) match, none visible)"
   else if mode == "type"
