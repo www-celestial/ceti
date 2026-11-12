@@ -9,7 +9,6 @@ use std/fiber
 use std/http
 use std/list
 use std/net
-use std/regex
 use std/result
 use std/sys
 use std/test
@@ -17,6 +16,9 @@ use std/text
 use std/value
 
 kept = ".cesia/firefox"
+
+(* The name that Ceti gives the template of this version of Firefox. *)
+templateName = "template-$(text.Replace(" ", "-", text.Trim(result.Unwrap(sys.Run("firefox", args = ["--full-version"])).Out)))"
 
 defn served()
   (** The address of tests/pages, served by this test on a free port of this machine. *)
@@ -255,10 +257,10 @@ defn isRunsForget()
   l = net.Listen(0)?
   fiber.Spawn(() -> http.Serve(http.App() then http.Get("/cached", r -> cached(hits)) then http.Static("/", "tests/pages"), listener = l))
   site = "http://127.0.0.1:$(net.Port(l))"
-  if value.Len(sys.List(kept)?) == 0
+  model = "$kept/$templateName"
+  if not sys.Exists(model)
     browser.Firefox(b -> result.Ok(missing), kept)?
   end
-  model = "$kept/$(sys.List(kept)?[1])"
   before = fingerprints(model)?
   look(f) = browser.Firefox(defn (b)
     p = browser.NewPage(b)?
@@ -287,29 +289,23 @@ defn isOneTemplatePerVersion()
   sys.Mkdir("$dir/template-1.0-1")?
   sys.Write("$dir/template-1.0-1/prefs.js", "")?
   ran = fiber.Pmap(k -> browser.Firefox(b -> result.Ok(k), dir), [1, 2])
-  full = sys.Run("firefox", args = ["--full-version"])?.Out
-  words = [w for w in text.Split(" ", text.Trim(full)) if regex.Test("[0-9]", w)]
-  value.Equal(ran, [result.Ok(1), result.Ok(2)]) and value.Equal(sys.List(dir)?, ["template-$(text.Join("-", words))"])
+  value.Equal(ran, [result.Ok(1), result.Ok(2)]) and value.Equal(sys.List(dir)?, [templateName])
 end
 
 defn current()
-  (** The one template of the kept folder and the fingerprints of its files, {Name, Files}, or missing. *)
-  names = sys.List(kept)
-  models = if result.IsOk(names) [n for n in names.Value if text.StartsWith("template-", n)] else [] end
-  if value.Len(models) != 1
-    return missing
-  end
-  files = fingerprints("$kept/$(models[1])")
-  if result.IsOk(files) {Name: models[1], Files: files.Value} else missing end
+  (** The fingerprints of the files of the template of this version of Firefox in the kept folder, or missing. *)
+  files = if sys.Exists("$kept/$templateName") fingerprints("$kept/$templateName") else result.Err("none") end
+  if result.IsOk(files) files.Value else missing end
 end
 
-(* The template as the tests of this file found it, when there was one: the last test compares it with what they
-   left. *)
+(* The template of this version as the tests of this file found it, when there was one: the last test compares it with
+   what they left. After an update of Firefox there is none yet. *)
 found = current()
 
 defn isTemplateUnchangedByTheTests()
   (** The last test of this file: of all the runs of the tests before it, in the kept folder, none changed the template,
-      file for file and byte for byte; when there was none at the start, the first run made it, and it is there. *)
+      file for file and byte for byte; when there was none for this version at the start, the first run made it, and it
+      is there. *)
   now = current()
   not value.IsMissing(now) and (value.IsMissing(found) or value.Equal(now, found))
 end

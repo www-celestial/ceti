@@ -46,8 +46,8 @@ A Firefox that starts on an empty profile spends about a second on work that it 
 registers its built-in modules, makes its databases, and fills its **startup cache**, where it keeps the scripts of its
 own interface, compiled, for the next starts. Ceti does that work once per folder. At the first start in `work/firefox`,
 it starts Firefox on an empty profile, headless, opens the session and closes it, before any page; it keeps that profile
-as the template, `work/firefox/template-159.0-20261027034604-20261027034604`. Each start then copies it, about 36 MB in
-21 ms, and Firefox is ready in about 1.0 s instead of 2.1 s ([Speed](speed.md#the-template-profile)).
+as the template, `work/firefox/template-Mozilla-Firefox-159.0-20261027034604-20261027034604`. Each start then copies
+it, about 36 MB in 21 ms, and Firefox is ready in about 1.0 s instead of 2.1 s ([Speed](speed.md#the-template-profile)).
 
 - **It holds no page's work.** The start that makes it opens no page, and Ceti removes what that start left that is its
   own before it keeps it: its lock, its HTTP cache, its telemetry, its crash reports, its session, and the list of files
@@ -55,8 +55,8 @@ as the template, `work/firefox/template-159.0-20261027034604-20261027034604`. Ea
 - **No run changes it.** Firefox runs on the copy, and Ceti removes the copy when Firefox has ended. So no run sees what
   another one did: its cookies, its storage, its cache, its history, its settings. The tests of Ceti check that the
   template is the same, byte for byte, after all of them.
-- **There is one for each version of Firefox.** Its name holds the version and the build of Firefox, as
-  `firefox --full-version` writes them; Ceti asks for them at each start, which takes 30 ms. After an update of Firefox,
+- **There is one for each version of Firefox.** Its name is what `firefox --full-version` writes, the version and the
+  build of Firefox, with dashes for its spaces; Ceti asks for it at each start, which takes 30 ms. After an update of Firefox,
   the next start makes the template of the new version and removes the others: Firefox refuses a profile of a later
   version than its own, and does its once-only work again on a profile of an earlier one.
 - **The first start in a folder is ready in about 4.2 s**, as it makes the template first. A folder that is thrown away

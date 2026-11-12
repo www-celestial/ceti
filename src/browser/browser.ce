@@ -12,7 +12,6 @@ use std/dict
 use std/fiber
 use std/list
 use std/math
-use std/regex
 use std/result
 use std/sys
 use std/text
@@ -80,8 +79,33 @@ failed(r) = match r
 end
 
 defn newProfile(dir, program)
-  (** A new profile in dir for one Firefox: a copy of the template of dir for this version of Firefox. *)
-  model = template(dir, program)?
+  (** A new profile in dir for one Firefox: a copy of the template of dir for this version of Firefox, made first when
+      dir has none. The template's name holds the version and the build, as firefox --full-version writes them,
+      template-Mozilla-Firefox-159.0-20261027034604-20261027034604, since Firefox refuses a profile of a later version
+      than its own, and does its first-start work again on one of an earlier version. It is made in a folder of its
+      own, then renamed at once, so that a copy never meets one half made: when another Firefox made it meanwhile, its
+      own goes. The templates of other versions then go. *)
+  ran = sys.Run(program, args = ["--full-version"])
+  if result.IsErr(ran) or ran.Value.Code != 0
+    return result.Err({Kind: "browser", Message: "$program --full-version gave no version."})
+  end
+  model = "$dir/template-$(text.Replace(" ", "-", text.Trim(ran.Value.Out)))"
+  if not sys.Exists(model)
+    build = newFolder(dir, "build")?
+    made = firstStart(program, build)
+    moved = if result.IsOk(made) sys.Rename(build, model) else made end
+    if result.IsErr(moved)
+      _ = removeTree(build)
+      if not sys.Exists(model)
+        return moved
+      end
+    end
+    for name in sys.List(dir)?
+      if text.StartsWith("template-", name) and "$dir/$name" != model
+        _ = removeTree("$dir/$name")
+      end
+    end
+  end
   p = newFolder(dir, "profile")?
   copied = copyTree(model, p)
   if result.IsErr(copied)
@@ -103,80 +127,27 @@ defn newFolder(dir, kind)
   result.Ok(p)
 end
 
-defn template(dir, program)
-  (** The template of dir for the version of this Firefox, template- and that version: an Ok of its folder, made first
-      when dir has none. It is made in a folder of its own, then renamed at once, so that a copy never meets one half
-      made: when another Firefox made it meanwhile, its own goes. The templates of other versions then go, as no
-      Firefox starts on a profile of a later version than its own, and an earlier one only after work that the template
-      saves. *)
-  key = version(program)?
-  kept = "$dir/template-$key"
-  if sys.Exists(kept)
-    return result.Ok(kept)
-  end
-  build = newFolder(dir, "build")?
-  made = firstStart(program, build)
-  if result.IsErr(made)
-    _ = removeTree(build)
-    return made
-  end
-  moved = sys.Rename(build, kept)
-  if result.IsErr(moved)
-    _ = removeTree(build)
-    if not sys.Exists(kept)
-      return moved
-    end
-  end
-  for name in sys.List(dir)?
-    if text.StartsWith("template-", name) and name != "template-$key"
-      _ = removeTree("$dir/$name")
-    end
-  end
-  result.Ok(kept)
-end
-
-defn version(program)
-  (** The version of a Firefox and its build, as firefox --full-version writes them, "Mozilla Firefox 159.0
-      20261027034604 20261027034604": its words that hold a digit, joined by dashes, as
-      159.0-20261027034604-20261027034604. Firefox itself starts on a profile as one of a new version when one of them
-      changes. *)
-  ran = sys.Run(program, args = ["--full-version"])
-  if result.IsErr(ran)
-    return result.Err({Kind: "browser", Message: "$program didn't start: $(ran.Error.Message)"})
-  end
-  words = [w for w in text.Split(" ", text.Trim(ran.Value.Out)) if regex.Test("^[0-9A-Za-z.]*[0-9][0-9A-Za-z.]*$", w)]
-  if ran.Value.Code != 0 or value.Len(words) == 0
-    return result.Err({Kind: "browser", Message: "$program --full-version gave no version: $(text.Trim("$(ran.Value.Out) $(ran.Value.Err)"))"})
-  end
-  result.Ok(text.Join("-", words))
-end
-
-(* What the first start of a template leaves that is its own, and that no later start needs: its lock, its HTTP cache,
-   its telemetry, its crash reports, its session, and the list of files that the startup cache read, which names them
-   by the path of the build. *)
-leftovers = ["lock", "cache2", "crashes", "minidumps", "datareporting", "saved-telemetry-pings", "sessionstore.jsonlz4",
-  "sessionstore-backups", "sessionCheckpoints.json", "thumbnails", "bookmarkbackups"]
+(* What the first start of a template leaves that is its own, and that no later start needs, besides its lock: its HTTP
+   cache, its telemetry, its crash reports, its session, and the list of files that the startup cache read, which names
+   them by the path of the build. *)
+leftovers = ["cache2", "crashes", "minidumps", "datareporting", "saved-telemetry-pings", "sessionstore.jsonlz4",
+  "sessionstore-backups", "sessionCheckpoints.json", "thumbnails", "bookmarkbackups", "startupCache/urlCache.bin"]
 
 defn firstStart(program, profile)
   (** Starts Firefox once on an empty profile, headless, and closes it before any page: the template's work, done once.
-      Ok(missing) once Firefox ended by itself with the code 0, with its leftovers removed, or an Err. *)
+      Ok(missing) once Firefox ended by itself with the code 0, with its lock and its leftovers removed, or an Err. *)
   fx = launch(program, true, profile)?
   opened = connect(fx.Url)
-  if result.IsErr(opened)
-    _ = quit(missing, fx)
-    return opened
-  end
-  code = quit(opened.Value, fx)?
+  code = quit(if result.IsOk(opened) opened.Value else missing end, fx)?
+  opened?
   if code != 0
-    return result.Err({Kind: "browser", Message: "Firefox ended with $(if value.IsMissing(code) "a TERM signal" else "the code $code" end) once closed, on its first start in $profile: no template is kept."})
+    return result.Err({Kind: "browser", Message: "Firefox didn't end by itself once closed, on its first start in $profile: no template is kept."})
   end
-  for name in sys.List(profile)?
-    if name in leftovers
+  _ = sys.Remove("$profile/lock")
+  for name in leftovers
+    if sys.Exists("$profile/$name")
       removeTree("$profile/$name")?
     end
-  end
-  if sys.Exists("$profile/startupCache/urlCache.bin")
-    sys.Remove("$profile/startupCache/urlCache.bin")?
   end
   result.Ok(missing)
 end
