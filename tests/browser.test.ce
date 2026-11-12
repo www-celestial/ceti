@@ -235,10 +235,11 @@ defn drained(hits)
 end
 
 defn fingerprints(dir)
-  (** Each file of a folder, at any depth, beside the fingerprint of its bytes. *)
+  (** Each file of a folder, at any depth, beside the fingerprint of its bytes, or "link" for a link. *)
   out = []
   for p in sys.Walk(dir)?
-    out = list.Append([p, cesia.Fingerprint(sys.Read(p)?)], out)
+    s = sys.Stat(p)
+    out = list.Append([p, if result.IsErr(s) or s.Value.IsLink "link" else cesia.Fingerprint(sys.Read(p)?) end], out)
   end
   result.Ok(out)
 end
@@ -246,8 +247,10 @@ end
 defn isRunsForget()
   (** A run that writes a cookie, localStorage, IndexedDB and the HTTP cache, then a next run in the same kept folder, on
       the same origin: the next one sees none of them and asks the server again, and the template is the same, file for
-      file and byte for byte. The first run sees what it wrote, and its HTTP cache answers the second fetch, so these
-      checks can see what a kept profile would keep. *)
+      file and byte for byte, with no profile left beside it. The first run sees what it wrote, and its HTTP cache answers
+      the second fetch. A page can't see what another run kept, as each page has a user context of its own: a Ceti that
+      ran on the template itself, or made each run's profile the next template, passes the page checks and fails the
+      fingerprints. *)
   hits = fiber.Channel(size = 100)
   l = net.Listen(0)?
   fiber.Spawn(() -> http.Serve(http.App() then http.Get("/cached", r -> cached(hits)) then http.Static("/", "tests/pages"), listener = l))
@@ -277,20 +280,6 @@ defn isRunsForget()
     value.Equal(others(kept)?, [])])
 end
 
-defn isOneRunKeepsACookie()
-  (** A cookie of an hour, which isNextTestSeesNoCookie, the next test, must not see. *)
-  on("form.html", defn (p, site)
-    _ = browser.Eval("document.cookie = 'left=1; max-age=3600'", p)?
-    browser.Eval("document.cookie", p)? == "left=1"
-  end)
-end
-
-defn isNextTestSeesNoCookie()
-  (** After isOneRunKeepsACookie: a cookie belongs to its host, whatever the port, so this page of 127.0.0.1 would see a
-      cookie that the kept folder carried from that test to this one. *)
-  on("form.html", (p, site) -> browser.Eval("document.cookie", p)? == "")
-end
-
 defn isOneTemplatePerVersion()
   (** Two Firefoxes that start at once in a folder that holds the template of another version: both run, one template of
       this version stays, named by firefox --full-version, and the other version's goes. *)
@@ -301,4 +290,25 @@ defn isOneTemplatePerVersion()
   full = sys.Run("firefox", args = ["--full-version"])?.Out
   words = [w for w in text.Split(" ", text.Trim(full)) if regex.Test("[0-9]", w)]
   value.Equal(ran, [result.Ok(1), result.Ok(2)]) and value.Equal(sys.List(dir)?, ["template-$(text.Join("-", words))"])
+end
+
+defn current()
+  (** The one template of the kept folder and the fingerprints of its files, {Name, Files}, or missing. *)
+  names = sys.List(kept)
+  models = if result.IsOk(names) [n for n in names.Value if text.StartsWith("template-", n)] else [] end
+  if value.Len(models) != 1
+    return missing
+  end
+  files = fingerprints("$kept/$(models[1])")
+  if result.IsOk(files) {Name: models[1], Files: files.Value} else missing end
+end
+
+(* The template as the tests of this file found it, when there was one: the last test compares it with what they left. *)
+found = current()
+
+defn isTemplateUnchangedByTheTests()
+  (** The last test of this file: of all the runs of the tests before it, in the kept folder, none changed the template,
+      file for file and byte for byte; when there was none at the start, the first run made it, and it is there. *)
+  now = current()
+  not value.IsMissing(now) and (value.IsMissing(found) or value.Equal(now, found))
 end
