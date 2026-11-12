@@ -218,7 +218,10 @@ handlers of `mousedown`, `mouseup` and `click` run as they would for a person.
 
 `browser.Type` gives the field the focus, selects what it holds, and types the text key by key: the field then holds
 the text. A field is an `input`, a `textarea`, or an element with `contenteditable`. An empty text deletes what the field
-held. `"\n"` types a line end in a `textarea`.
+held. `"\n"` types a line end in a `textarea`. An `input` of a type that takes no keys in Firefox, `date`, `time`,
+`datetime-local`, `month`, `week`, `color` or `range`, gets the text as its value, written as HTML writes it
+(`"2026-03-15"`, `"09:30"`, `"#ff0000"`), with the events `input` and `change`; a text it can't take is a bug, and
+panics.
 
 `browser.Press` presses one key in the element that has the focus: a character, as `"a"` or `" "`, or a key by its name.
 Modifiers go before the key, joined by `+`, and are held while it is pressed:
@@ -235,6 +238,40 @@ The names are those of the W3C WebDriver standard (§15.6.2): `Backspace`, `Tab`
 `PageDown`, `End`, `Home`, `ArrowLeft`, `ArrowUp`, `ArrowRight`, `ArrowDown`, `Insert`, `Delete`, `Pause`, `F1` to `F12`,
 and the modifiers `Shift`, `Control`, `Alt` and `Meta`. A name that is no key is a bug of the program, and panics with
 the list.
+
+## Forms
+
+Beside `Type`, three functions fill a form, and `browser.Value` reads it back:
+
+```cesia norun
+defn order(p)
+  browser.Select(browser.ByLabel("Country"), "France", p)?
+  browser.Select(browser.ByLabel("Toppings"), ["Olives", "Basil"], p)?
+  browser.Check(browser.ByLabel("I agree"), p)?
+  browser.Uncheck(browser.ByLabel("Send me news"), p)?
+  browser.Upload(browser.ByLabel("Photo"), ["tests/pages/photo.png"], p)
+end
+```
+
+- `browser.Select(sel, labels, p)` chooses the options of a `<select>` by their labels, the text a person reads in the
+  list; a list of labels for a select that takes several, which are then its only chosen options. It waits for the
+  select, visible and enabled, and for those options, which a page may add late; past its time, the `Err` names the
+  option missing. Firefox draws the open list of a select outside the page, where the mouse of BiDi can't reach, so Ceti
+  makes the choice in the page and sends `input` and `change`, as the browser does after a person's choice: those two
+  events have `isTrusted` false.
+- `browser.Check(sel, p)` and `browser.Uncheck(sel, p)` click a checkbox or a radio, as `Click` does, when it isn't
+  already as asked, then wait until it is. They take an `input` and an element of the role `checkbox`, `radio` or
+  `switch` (its state is `aria-checked`). A click never unchecks a radio, so `Uncheck` of one is a bug, and panics.
+- `browser.Upload(sel, files, p)` gives a file field its files, a path or a list of paths, as a person picks them in the
+  browser's dialog; `[]` empties it. It waits for an `input` of type `file`, shown or not, since a page often hides it
+  behind a button of its own. Firefox sends `input` and `change` itself.
+
+**What Upload may read.** Firefox reads the files itself, outside Cesia's sandbox, so Ceti first asks Cesia for each one
+with `sys.Stat`: the program needs `read=` for it, and Cesia follows links, so a link can't lead out of the folders that
+`read=` allows; without it, the program stops with Cesia's message, as for any read. Only regular files are taken.
+Firefox needs absolute paths, and Cesia gives no current folder, so Ceti learns it from Firefox: the absolute path of the
+profile, less the relative one Ceti gave it. A relative path is so taken from the current folder when the folder given to
+`browser.Firefox` is relative, as `.cesia/firefox`; with an absolute one, as `test.Temp()`, give absolute paths.
 
 ## Reading the page
 

@@ -12,6 +12,7 @@ use std/dict
 use std/fiber
 use std/list
 use std/math
+use std/path
 use std/result
 use std/sys
 use std/text
@@ -51,7 +52,7 @@ defn whole(f, dir, headless, program)
     return started
   end
   fx = started.Value
-  opened = connect(fx.Url)
+  opened = connect(fx.Url, profile)
   if result.IsErr(opened)
     _ = quit(missing, fx)
     _ = removeTree(profile)
@@ -137,7 +138,7 @@ defn firstStart(program, profile)
   (** Starts Firefox once on an empty profile, headless, and closes it before any page: the template's work, done once.
       Ok(missing) once Firefox ended by itself with the code 0, with its lock and its leftovers removed, or an Err. *)
   fx = launch(program, true, profile)?
-  opened = connect(fx.Url)
+  opened = connect(fx.Url, profile)
   code = quit(if result.IsOk(opened) opened.Value else missing end, fx)?
   opened?
   if code != 0
@@ -236,10 +237,11 @@ defn drained(proc, lines, rest)
   lines
 end
 
-defn connect(url)
-  (** Opens the BiDi session: the WebSocket, session.new, and the tab Firefox opened at its start. Alerts and other
-      prompts are dismissed as they open, as no person is there to answer them, and downloads are refused: without it,
-      Firefox would save a page's download in the user's download folder, where the program never allowed a write. *)
+defn connect(url, profile)
+  (** Opens the BiDi session of a Firefox on the profile: the WebSocket, session.new, and the tab Firefox opened at its
+      start. Alerts and other prompts are dismissed as they open, as no person is there to answer them, and downloads
+      are refused: without it, Firefox would save a page's download in the user's download folder, where the program
+      never allowed a write. *)
   s = open("$url/session")?
   caps = {alwaysMatch: {unhandledPromptBehavior: {default: "dismiss"}}}
   started = call("session.new", {capabilities: caps}, s)
@@ -250,7 +252,18 @@ defn connect(url)
     return tree
   end
   fiber.Send(tree.Value.contexts[1].context, s.home)
-  result.Ok(s)
+  result.Ok(session(s.requests, s.gone, s.home, s.dispatcher, profile, hereOf(dict.GetOr("moz:profile", missing, started.Value.capabilities), profile)))
+end
+
+defn hereOf(full, profile)
+  (** The current folder, which Cesia doesn't give: full, the absolute path of the profile that Firefox gives in
+      session.new, less the relative path that Ceti gave it; missing when that path is absolute or goes up. *)
+  parts = [x for x in text.Split("/", profile) if x != "" and x != "."]
+  tail = "/$(text.Join("/", parts))"
+  if not value.IsText(full) or path.IsAbsolute(profile) or ".." in parts or not text.EndsWith(tail, full)
+    return missing
+  end
+  text.ByteSlice(1, text.ByteLength(full) - text.ByteLength(tail), full)
 end
 
 defn quit(b, fx)
@@ -281,17 +294,17 @@ defn quit(b, fx)
   result.Ok(if stopped missing else ended.Value end)
 end
 
-defn removeTree(path)
+defn removeTree(at)
   (** Removes a folder and all it holds, a link but never what it points to: Ok(missing), or the first Err. A link that
       leads nowhere, as the lock of a profile, has no Stat. *)
-  s = sys.Stat(path)
+  s = sys.Stat(at)
   if result.IsErr(s)
-    return sys.Remove(path)
+    return sys.Remove(at)
   end
   if s.Value.IsDir and not s.Value.IsLink
-    for name in sys.List(path)?
-      removeTree("$path/$name")?
+    for name in sys.List(at)?
+      removeTree("$at/$name")?
     end
   end
-  sys.Remove(path)
+  sys.Remove(at)
 end

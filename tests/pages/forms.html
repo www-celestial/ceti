@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Forms</title>
+<style>body { font: 16px sans-serif; margin: 2em } #photo { display: none }</style></head>
+<body>
+<h1>Forms</h1>
+<label for="country">Country</label>
+<select id="country"><option>France</option><option>Spain</option><option value="it">Italy</option></select>
+<label for="fruits">Fruits</label>
+<select id="fruits" multiple><option>Apple</option><option>Pear</option><option>Plum</option></select>
+<label for="late">Late</label><select id="late"></select>
+<label><input id="agree" type="checkbox"> I agree</label>
+<label><input id="news" type="checkbox" checked> News</label>
+<label><input id="fast" type="radio" name="speed"> Fast</label>
+<label><input id="slow" type="radio" name="speed" checked> Slow</label>
+<div id="dark" role="switch" aria-checked="false" aria-label="Dark mode" tabindex="0">dark</div>
+<label for="photo">Photo</label><button id="pick" type="button">Choose a photo</button><input id="photo" type="file" multiple>
+<label for="day">Day</label><input id="day" type="date">
+<label for="hue">Hue</label><input id="hue" type="color">
+<p id="said"></p>
+<script>
+const said = document.getElementById('said');
+const log = (t) => { said.textContent += t + ';'; };
+document.getElementById('country').addEventListener('change', (e) => log('country ' + e.target.value));
+document.getElementById('fruits').addEventListener('input', () => log('fruits'));
+document.getElementById('photo').addEventListener('change', (e) => log('files ' + [...e.target.files].map((f) => f.name + ':' + f.size).join(',')));
+document.getElementById('day').addEventListener('change', (e) => log('day ' + e.target.value));
+const dark = document.getElementById('dark');
+dark.addEventListener('click', () => dark.setAttribute('aria-checked', String(dark.getAttribute('aria-checked') !== 'true')));
+setTimeout(() => { for (const n of ['Early', 'Later']) document.getElementById('late').append(new Option(n)); }, 300);
+</script>
+</body>
+</html>

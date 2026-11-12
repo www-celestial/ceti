@@ -64,13 +64,15 @@ defn Click(selector, p, timeout = DefaultTimeout)
   (** Waits for the first element of a selector, a CSS text or a locator as ByRole, that is visible and not disabled,
       scrolls it into view, and clicks its centre with the mouse: the events are the browser's own, as a person's click
       makes them. Ok(missing), or an Err of the kind "timeout". *)
-  node = seek(selector, "click", p, timeout)?
-  pointer = [
-    {type: "pointerMove", x: 0, y: 0, origin: {type: "element", element: {sharedId: node.sharedId}}},
-    {type: "pointerDown", button: 0},
-    {type: "pointerUp", button: 0}]
-  act([{type: "pointer", id: "mouse", parameters: {pointerType: "mouse"}, actions: pointer}], p)
+  press(seek(selector, "click", p, timeout)?, p)
 end
+
+press(node, p) = act([mouse([toward(node, 0), {type: "pointerDown", button: 0}, {type: "pointerUp", button: 0}])], p)   (* A click at the centre of an element in view. *)
+
+(* The mouse's move to the centre of an element in view, in duration milliseconds. *)
+toward(node, duration) = {type: "pointerMove", x: 0, y: 0, duration: duration, origin: {type: "element", element: {sharedId: node.sharedId}}}
+
+mouse(moves) = {type: "pointer", id: "mouse", parameters: {pointerType: "mouse"}, actions: moves}   (* A mouse source. *)
 
 defn Type(selector, words, p, timeout = DefaultTimeout)
   (** Waits for the first field of a selector that is visible, enabled and not read-only, gives it the focus, selects

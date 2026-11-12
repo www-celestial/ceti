@@ -108,3 +108,75 @@ defn isLocatorErrors()
       text.Contains("is no field", panicked(() -> Value("h1", p)))])
   end)
 end
+defn isSelect()
+  at("forms.html", defn (p)
+    Select(ByLabel("Country"), "Italy", p)?
+    Select("#fruits", ["Apple", "Plum"], p)?
+    Select(ByLabel("Late"), "Later", p)?
+    list.All([
+      Value(ByLabel("Country"), p)? == "Italy",
+      Eval("document.getElementById('country').value", p)? == "it",
+      value.Equal(Value("#fruits", p)?, ["Apple", "Plum"]),
+      Value("#late", p)? == "Later",
+      Text("#said", p)? == "country it;fruits;",
+      Select("#country", "Germany", p, timeout = 0.1).Error.Message == "#country: no option \"Germany\" after 0.1 s",
+      text.Contains("takes one option, and 2 were given", panicked(() -> Select("#country", ["France", "Spain"], p))),
+      text.Contains("is no select", panicked(() -> Select("h1", "x", p)))])
+  end)
+end
+
+defn isCheck()
+  at("forms.html", defn (p)
+    Check(ByLabel("I agree"), p)?
+    Check(ByLabel("I agree"), p)?
+    Uncheck("#news", p)?
+    Check(ByLabel("Fast"), p)?
+    Check(ByRole("switch", name = "Dark mode"), p)?
+    list.All([
+      Value("#agree", p)? == true,
+      Value("#news", p)? == false,
+      Value("#fast", p)? == true,
+      Value("#slow", p)? == false,
+      Value("#dark", p)? == true,
+      text.Contains("never unchecks", panicked(() -> Uncheck("#fast", p))),
+      text.Contains("is no checkbox or radio", panicked(() -> Check("h1", p)))])
+  end)
+end
+
+defn isUpload()
+  at("forms.html", defn (p)
+    Upload(ByLabel("Photo"), ["tests/pages/report.csv", "tests/pages/form.html"], p)?
+    files = Text("#said", p)?
+    Upload("#photo", [], p)?
+    list.All([
+      text.StartsWith("files report.csv:14,form.html:", files),
+      Eval("document.getElementById('photo').files.length", p)? == 0,
+      Upload("#photo", "tests/pages", p).Error.Message == "Upload: tests/pages is no file.",
+      text.Contains("Permission \"read\" denied for /etc/hostname", panicked(() -> Upload("#photo", "/etc/hostname", p))),
+      text.Contains("is no file field", panicked(() -> Upload("h1", [], p)))])
+  end)
+end
+
+defn isTypeWithoutKeys()
+  at("forms.html", defn (p)
+    Type(ByLabel("Day"), "2026-03-15", p)?
+    Type("#hue", "#ff0000", p)?
+    list.All([
+      Value("#day", p)? == "2026-03-15",
+      Value("#hue", p)? == "#ff0000",
+      Text("#said", p)? == "day 2026-03-15;",
+      text.Contains("takes no value \"tomorrow\"", panicked(() -> Type("#day", "tomorrow", p)))])
+  end)
+end
+
+
+defn isHereOf()
+  (** The current folder from the absolute path of a profile that Firefox gives and the path that Ceti gave it. *)
+  list.All([
+    hereOf("/home/ana/shop/.cesia/firefox/profile-1", ".cesia/firefox/profile-1") == "/home/ana/shop",
+    hereOf("/home/ana/shop/work/profile-1", "./work//profile-1") == "/home/ana/shop",
+    value.IsMissing(hereOf("/tmp/t/profile-1", "/tmp/t/profile-1")),
+    value.IsMissing(hereOf("/home/ana/x/profile-1", "../x/profile-1")),
+    value.IsMissing(hereOf(missing, "work/profile-1")),
+    value.IsMissing(hereOf("/elsewhere/profile-1", "work/profile-1"))])
+end

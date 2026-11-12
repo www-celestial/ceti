@@ -13,8 +13,10 @@ use std/value
 answerTime = 30
 
 (* The connection as the pages use it: requests goes to the dispatcher, gone is closed once the connection has ended,
-   and home holds, while no page uses it, the tab Firefox opened at its start, beside which the first page opens. *)
-struct session { requests, gone, home, dispatcher }
+   home holds, while no page uses it, the tab Firefox opened at its start, beside which the first page opens, profile is
+   the folder of the profile as Ceti gave it to Firefox, and here the current folder, absolute, or missing when Ceti
+   can't tell it. *)
+struct session { requests, gone, home, dispatcher, profile, here }
 
 failure(kind, message) = result.Err({Kind: kind, Message: message})
 lost() = failure("closed", "Firefox has closed.")
@@ -25,7 +27,7 @@ defn open(url)
   c = websocket.Dial(url)?
   requests = fiber.Channel()
   gone = fiber.Channel()
-  result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone))))
+  result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone)), missing, missing))
 end
 
 defn call(method, params, s, wait = answerTime)
