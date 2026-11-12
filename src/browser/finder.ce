@@ -4,7 +4,8 @@
    seek(selector, mode, ms) looks for the first element that the selector matches and that can be used: attached to
    the document (querySelectorAll finds no other), its box not empty, not visibility: hidden, and for "click" and "type"
    not disabled, for "type" not read-only. It looks again at each frame (requestAnimationFrame) and at each change of the
-   DOM (MutationObserver), until ms milliseconds have passed. Then, by mode:
+   DOM (MutationObserver), until ms milliseconds have passed; an element there at once is given at once, with no
+   promise and no watcher. Then, by mode:
      "show"   gives {ok: true}
      "text"   gives {text}, the element's innerText
      "click"  scrolls the element to the middle of the viewport if its centre is out of it, and gives the element
@@ -13,16 +14,8 @@
    gives {late: true, found, shown, usable}: how many elements matched, were visible, could be used. A selector that
    isn't CSS gives {bad: message}, and an element that "type" can't type in gives {field: false}. *)
 
-seekJs = "(selector, mode, ms) => new Promise((done) => {
-  let timer = 0, frame = 0, found = 0, shown = 0, usable = 0;
-  const end = (value) => {
-    clearTimeout(timer);
-    cancelAnimationFrame(frame);
-    watcher.disconnect();
-    removeEventListener('pagehide', left);
-    done(value);
-  };
-  const left = () => end({left: true});
+seekJs = "(selector, mode, ms) => {
+  let found = 0, shown = 0, usable = 0;
   const visible = (e) => {
     const box = e.getBoundingClientRect();
     return box.width > 0 && box.height > 0 && getComputedStyle(e).visibility !== 'hidden';
@@ -34,36 +27,52 @@ seekJs = "(selector, mode, ms) => new Promise((done) => {
     const x = box.left + box.width / 2, y = box.top + box.height / 2;
     if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) e.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
   };
-  const look = () => {
+  const pick = () => {
     let all;
-    try { all = document.querySelectorAll(selector); } catch (error) { end({bad: String(error.message)}); return; }
+    try { all = document.querySelectorAll(selector); } catch (error) { return {bad: String(error.message)}; }
     found = all.length; shown = 0; usable = 0;
     for (const e of all) {
       if (!visible(e)) continue;
       shown++;
       if (!ready(e)) continue;
       usable++;
-      if (mode === 'show') end({ok: true});
-      else if (mode === 'text') end({text: e.innerText});
-      else if (mode === 'click') { bring(e); end(e); }
-      else if (!editable(e)) end({field: false});
-      else {
-        bring(e);
-        e.focus();
-        if (e.isContentEditable) getSelection().selectAllChildren(e); else e.select();
-        end({ok: true});
-      }
-      return;
+      if (mode === 'show') return {ok: true};
+      if (mode === 'text') return {text: e.innerText};
+      if (mode === 'click') { bring(e); return e; }
+      if (!editable(e)) return {field: false};
+      bring(e);
+      e.focus();
+      if (e.isContentEditable) getSelection().selectAllChildren(e); else e.select();
+      return {ok: true};
     }
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(look);
+    return null;
   };
-  const watcher = new MutationObserver(look);
-  addEventListener('pagehide', left);
-  watcher.observe(document, {childList: true, subtree: true, attributes: true, characterData: true});
-  timer = setTimeout(() => end({late: true, found, shown, usable}), ms);
-  look();
-})"
+  const now = pick();
+  if (now !== null) return now;
+  if (ms <= 0) return {late: true, found, shown, usable};
+  return new Promise((done) => {
+    let timer = 0, frame = 0;
+    const end = (value) => {
+      clearTimeout(timer);
+      cancelAnimationFrame(frame);
+      watcher.disconnect();
+      removeEventListener('pagehide', left);
+      done(value);
+    };
+    const left = () => end({left: true});
+    const look = () => {
+      const value = pick();
+      if (value !== null) { end(value); return; }
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(look);
+    };
+    const watcher = new MutationObserver(look);
+    addEventListener('pagehide', left);
+    watcher.observe(document, {childList: true, subtree: true, attributes: true, characterData: true});
+    timer = setTimeout(() => end({late: true, found, shown, usable}), ms);
+    frame = requestAnimationFrame(look);
+  });
+}"
 
 (* The innerText of every element the selector matches, as they are now, or {bad: message} for a selector that isn't
    CSS. *)

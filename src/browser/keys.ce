@@ -30,11 +30,10 @@ end
 
 defn chord(combo)
   (** The key actions of a key with its modifiers, as "Control+Shift+ArrowLeft": each modifier down in order, the key
-      down and up, then the modifiers up in the reverse order. "+" alone, or after a modifier, is the key +. *)
-  parts = if value.Len(combo) == 1 [combo] else text.Split("+", combo) end
-  if value.Len(parts) > 1 and parts[value.Len(parts)] == ""
-    parts = list.Concat(list.Take(value.Len(parts) - 2, parts), ["+"])
-  end
+      down and up, then the modifiers up in the reverse order. "+" alone, or after a modifier as in "Control++", is the
+      key +. *)
+  plus = value.Len(combo) > 1 and text.EndsWith("++", combo)
+  parts = if value.Len(combo) == 1 [combo] else if plus list.Append("+", text.Split("+", text.ByteSlice(1, text.ByteLength(combo) - 2, combo))) else text.Split("+", combo) end
   held = list.DropLast(1, parts)
   for m in held
     if not (m in modifiers)

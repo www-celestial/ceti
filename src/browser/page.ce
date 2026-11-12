@@ -54,7 +54,8 @@ end
 defn Go(url, p, timeout = DefaultTimeout)
   (** Goes to a URL and waits for its load event, at most timeout seconds: Ok(missing), an Err of the kind "browser"
       when the page can't be loaded, or of the kind "timeout". *)
-  call("browsingContext.navigate", {context: p.context, url: url, wait: "complete"}, p.session, wait = timeout)?
+  went = call("browsingContext.navigate", {context: p.context, url: url, wait: "complete"}, p.session, wait = timeout)
+  late(went, "$url: not loaded after $timeout s")?
   result.Ok(missing)
 end
 
@@ -109,7 +110,7 @@ defn Eval(js, p, timeout = DefaultTimeout)
       as its text, NaN and the infinities as missing. Another value, as a function, an element or a Map, is an Err of the
       kind "script" that names it: turn it into one of those in the expression. An exception is an Err of the kind
       "script" with its message. *)
-  got = call("script.evaluate", {expression: js, target: {context: p.context}, awaitPromise: true}, p.session, wait = timeout)?
+  got = late(call("script.evaluate", {expression: js, target: {context: p.context}, awaitPromise: true}, p.session, wait = timeout), "Eval: no value after $timeout s")?
   if got.type == "exception"
     return result.Err({Kind: "script", Message: got.exceptionDetails.text})
   end
@@ -129,6 +130,9 @@ defn WaitFor(selector, p, timeout = DefaultTimeout)
   seek(selector, "show", p, timeout)?
   result.Ok(missing)
 end
+
+(* A timeout of the answer, said as the wait it was. *)
+late(r, message) = if result.IsErr(r) and r.Error.Kind == "timeout" result.Err({Kind: "timeout", Message: message}) else r end
 
 defn act(sources, p)
   (** Performs input actions, then gives Ok(missing) or an Err. *)

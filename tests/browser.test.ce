@@ -103,7 +103,8 @@ defn isKeys()
     list.All([
       browser.Text("#pressed", p)? == "a Enter ArrowDown ctrl+a ctrl++ + shift+Tab",
       text.Contains("is no key", panicOf(() -> browser.Press("Enterr", p))),
-      text.Contains("is no modifier", panicOf(() -> browser.Press("Ctrl+a", p)))])
+      text.Contains("is no modifier", panicOf(() -> browser.Press("Ctrl+a", p))),
+      text.Contains("is no key", panicOf(() -> browser.Press("Control+", p)))])
   end)
 end
 
@@ -138,7 +139,7 @@ defn isEval()
       value.Equal(browser.Eval("throw new TypeError('bad')", p).Error, {Kind: "script", Message: "TypeError: bad"}),
       kindOf(browser.Eval("() => 1", p)) == "script",
       kindOf(browser.Eval("document.body", p)) == "script",
-      kindOf(browser.Eval("new Promise(() => {})", p, timeout = 0.2)) == "timeout"])
+      browser.Eval("new Promise(() => {})", p, timeout = 0.2).Error.Message == "Eval: no value after 0.2 s"])
   end)
 end
 
@@ -169,14 +170,23 @@ defn isPagesApart()
   end, test.Temp())
 end
 
+defn slowly()
+  sys.Sleep(2)
+  {Status: 200, Body: "late"}
+end
+
 defn isErrors()
-  site = served()?
+  l = net.Listen(0)?
+  fiber.Spawn(() -> http.Serve(http.App() then http.Get("/slow", r -> slowly()), listener = l))
+  slow = "http://127.0.0.1:$(net.Port(l))/slow"
   kept = browser.Firefox(defn (b)
     p = browser.NewPage(b)?
     refused = browser.Go("http://127.0.0.1:1/", p)
-    result.Ok({Browser: b, Page: p, Refused: refused})
+    late = browser.Go(slow, p, timeout = 0.3)
+    result.Ok({Browser: b, Page: p, Refused: refused, Late: late})
   end, test.Temp())?
   list.All([
+    kept.Late.Error.Message == "$slow: not loaded after 0.3 s",
     kept.Refused.Error.Kind == "browser",
     kept.Refused.Error.Code == "unknown error",
     browser.Text("h1", kept.Page).Error.Kind == "closed",
