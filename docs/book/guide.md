@@ -533,19 +533,24 @@ folder of the profile only, then Ceti moves the file to `to` with `sys.Rename`, 
 disk than the profile's, it copies the file through the memory, up to 256 MiB. No download that ends within `timeout`
 seconds after the action is an `Err` of the kind `"timeout"`, a download that failed one of the kind `"browser"`.
 
-## Screenshots
+## Screenshots and PDF
 
-`browser.Screenshot` gives the bytes of a PNG image of the viewport, or of the whole page with `full = true`. The bytes are
+`browser.Screenshot` gives the bytes of a PNG image of the viewport, or of the whole page with `full = true`, or, with
+`of =` a selector, of its first visible element alone, wherever it is in the page, without scrolling it. The bytes are
 a text of Cesia, which `sys.Write` saves as it is:
 
 ```cesia norun
 use std/sys
 save(p) = sys.Write("page.png", browser.Screenshot(p, full = true)?)
+chart(p) = sys.Write("chart.png", browser.Screenshot(p, of = browser.ByRole("img", name = "Sales"))?)
 ```
+
+`browser.Pdf(p)` gives the bytes of the page printed as a PDF, on paper of the US Letter size with margins of 1 cm, the
+defaults of BiDi. Firefox takes about 2.6 s to print a page, the first time and the next ones.
 
 Firefox sends the image in Base64, a way to write bytes as letters; Cesia decodes it in OCaml, about 0.1 ms for a
 screenshot of 19 KB. A message of Firefox holds at most 64 MiB, the `DefaultMaxMessage` of `std/websocket`, so a
-screenshot holds at most 48 MiB of PNG: past it, the connection closes, and the browser is `"closed"`.
+screenshot or a PDF holds at most 48 MiB: past it, the connection closes, and the browser is `"closed"`.
 
 ## Errors
 

@@ -158,11 +158,22 @@ defn Eval(js, p, timeout = DefaultTimeout)
   fromRemote(got.result)
 end
 
-defn Screenshot(p, full = false)
-  (** The bytes of a PNG image of what the page shows in its viewport, or of the whole page with full = true: an Ok of
-      a text of bytes, which sys.Write saves as it is, or an Err. *)
-  shot = call("browsingContext.captureScreenshot", {context: p.context, origin: if full "document" else "viewport" end}, p.session)?
+defn Screenshot(p, full = false, of = missing, timeout = DefaultTimeout)
+  (** The bytes of a PNG image of what the page shows in its viewport, or of the whole page with full = true, or, with
+      of a selector, of its first visible element alone, wherever it is in the page, once there is one: an Ok of a text
+      of bytes, which sys.Write saves as it is, or an Err. *)
+  params = {context: p.context, origin: if full or not value.IsMissing(of) "document" else "viewport" end}
+  params = if value.IsMissing(of) params else dict.Put("clip", {type: "element", element: {sharedId: seek(of, "node", p, timeout)?.sharedId}}, params) end
+  shot = call("browsingContext.captureScreenshot", params, p.session)?
   encode.Unbase64(shot.data)
+end
+
+defn Pdf(p)
+  (** The bytes of a PDF of the page, as it prints on paper of the US Letter size with margins of 1 cm, BiDi's
+      defaults: an Ok of a text of bytes, which sys.Write saves as it is, or an Err. Firefox takes about 2.6 s to print
+      a page. *)
+  printed = call("browsingContext.print", {context: p.context}, p.session)?
+  encode.Unbase64(printed.data)
 end
 
 defn WaitFor(selector, p, timeout = DefaultTimeout)

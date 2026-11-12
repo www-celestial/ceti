@@ -100,3 +100,19 @@ defn isEmulate()
       Emulate(p, timezone = "Mars/Olympus").Error.Kind == "browser"])
   end)
 end
+
+defn isPdfAndElementShot()
+  page("long.html", defn (p, site)
+    png = text.FromBytes([137, 80, 78, 71, 13, 10, 26, 10])
+    size(image) = [list.Reduce((n, b) -> n * 256 + b, 0, text.Bytes(text.ByteSlice(k, k + 3, image))) for k in [17, 21]]
+    far = Screenshot(p, of = "#far")?
+    head = Screenshot(p, of = ByRole("heading", name = "Long"))?
+    pdf = Pdf(p)?
+    list.All([
+      text.StartsWith(png, far) and text.StartsWith(png, head),
+      size(far)[2] < 100 and size(head)[1] > size(far)[1],
+      Eval("scrollY", p)? == 0,
+      text.StartsWith("%PDF-", pdf),
+      Screenshot(p, of = "#nothing", timeout = 0.1).Error.Kind == "timeout"])
+  end)
+end
