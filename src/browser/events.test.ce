@@ -155,3 +155,20 @@ defn isDownload()
       value.Equal(sys.List(dir)?, ["report.csv"])])
   end)
 end
+
+defn isUntrustedMessages()
+  (** A message of Firefox is read as any input: a download path out of its folder is refused before any move, and an
+      answer or an entry of the console that lacks its fields gives an Err or an empty entry, never a panic. *)
+  folder = "/home/ana/.cesia/firefox/profile-1/downloads-1"
+  out(path) = saved({status: "complete", filepath: path, url: "http://x/"}, folder, ".cesia/firefox/profile-1/downloads-1", "never.csv").Error.Message
+  list.All([
+    text.StartsWith("Firefox saved the download out of its folder", out("/home/ana/.bashrc")),
+    text.StartsWith("Firefox saved the download out of its folder", out("$folder/../../prefs.js")),
+    text.StartsWith("Firefox saved the download out of its folder", out("$folder/a/b.csv")),
+    text.StartsWith("Firefox saved the download out of its folder", out("$folder/..")),
+    saved({status: "canceled"}, folder, "x", "y").Error.Kind == "browser",
+    value.Equal(answer({}).Error, {Kind: "browser", Code: "unknown error", Message: ""}),
+    value.Equal(answer({type: "success"}), result.Ok({})),
+    value.Equal(entry({}), {Type: "log", Text: ""}),
+    value.Equal(entry({type: "javascript", text: 3}), {Type: "exception", Text: ""})])
+end
