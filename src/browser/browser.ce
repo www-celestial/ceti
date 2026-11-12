@@ -239,13 +239,14 @@ end
 
 defn connect(url, profile)
   (** Opens the BiDi session of a Firefox on the profile: the WebSocket, session.new, and the tab Firefox opened at its
-      start. Alerts and other prompts are dismissed as they open, as no person is there to answer them, and downloads
-      are refused: without it, Firefox would save a page's download in the user's download folder, where the program
-      never allowed a write. *)
+      start. It asks for the events of the prompts and of the console: the dispatcher dismisses each prompt that no
+      Dialog waits for, as no person is there to answer it, and keeps the console. Downloads are refused: without it,
+      Firefox would save a page's download in the user's download folder, where the program never allowed a write. *)
   s = open("$url/session")?
-  caps = {alwaysMatch: {unhandledPromptBehavior: {default: "dismiss"}}}
+  caps = {alwaysMatch: {unhandledPromptBehavior: {default: "ignore"}}}
   started = call("session.new", {capabilities: caps}, s)
-  denied = if result.IsOk(started) call("browser.setDownloadBehavior", {downloadBehavior: {type: "denied"}}, s) else started end
+  heard = if result.IsOk(started) call("session.subscribe", {events: ["browsingContext.userPromptOpened", "log.entryAdded"]}, s) else started end
+  denied = if result.IsOk(heard) call("browser.setDownloadBehavior", {downloadBehavior: {type: "denied"}}, s) else heard end
   tree = if result.IsOk(denied) call("browsingContext.getTree", {maxDepth: 0}, s) else denied end
   if result.IsErr(tree)
     hangUp(s)

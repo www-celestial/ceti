@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Events</title><style>body { font: 16px sans-serif; margin: 2em }</style></head>
+<body>
+<h1>Events</h1>
+<button id="alert">alert</button> <button id="confirm">confirm</button> <button id="prompt">prompt</button>
+<button id="later">alert later</button>
+<a id="help" href="target.html" target="_blank">Help</a> <button id="open">open</button>
+<button id="log">log</button> <button id="boom">boom</button>
+<button id="load">load items</button> <button id="save">save</button> <button id="ping">ping</button>
+<a id="export" href="report.csv" download>Export</a>
+<ul id="items"></ul>
+<p id="said"></p>
+<script>
+const said = (t) => { document.getElementById('said').textContent = t; };
+const on = (id, f) => document.getElementById(id).addEventListener('click', f);
+on('alert', () => { alert('hello'); said('after the alert'); });
+on('confirm', () => said('confirmed: ' + confirm('Delete the file?')));
+on('prompt', () => said('name: ' + prompt('Your name?', 'nobody')));
+on('later', () => setTimeout(() => { alert('late'); said('late alert closed'); }, 200));
+on('open', () => window.open('form.html'));
+on('log', () => { console.log('one', 2); console.warn('careful'); console.error('bad'); });
+on('boom', () => setTimeout(() => { throw new TypeError('boom'); }, 0));
+on('load', () => fetch('/api/items?page=1').then((r) => r.json()).then((xs) => {
+  document.getElementById('items').innerHTML = xs.map((x) => '<li>' + x + '</li>').join('');
+}).catch((e) => said('failed: ' + e.message)));
+on('save', () => fetch('/api/save', {method: 'POST', body: 'x'}).then((r) => r.text()).then((t) => said('saved ' + t)));
+on('ping', () => fetch('https://ping.invalid/beacon').then(() => said('pinged'), () => said('no ping')));
+</script>
+</body>
+</html>

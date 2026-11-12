@@ -46,6 +46,7 @@ defn ClosePage(p)
   (** Closes a page and its user context: Ok(missing), or an Err. A program that opens many pages closes each one; the
       pages that are still open close with the browser. *)
   call("browser.removeUserContext", {userContext: p.userContext}, p.session)?
+  fiber.Send({Forget: p.userContext}, p.session.requests)
   if not value.IsMissing(p.home)
     fiber.Send(p.home, p.session.home)
   end

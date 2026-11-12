@@ -309,6 +309,53 @@ of those in the expression, as `[...m]` for a `Map` or `el.id` for an element. S
 levels, as lists of lists of lists: Firefox writes it no deeper, so that no message is too deep to read. An exception is an `Err` of the kind
 `"script"` with its message, as `TypeError: x is undefined`.
 
+## What the page does by itself
+
+A page shows dialogs, writes in its console, opens other pages, sends requests and starts downloads, often after a click.
+The functions that wait for one of those take the action that causes it as a function of no argument, and watch before
+they run it, so that nothing comes too early to be seen; then they wait for it, at most `timeout` seconds after the
+action, 5 by default. The action's own `Err` comes back as it is.
+
+### Dialogs
+
+Firefox tells Ceti of each dialog of a page: `alert`, `confirm`, `prompt`, and the question that `beforeunload` asks
+before a page is left. One that no function waits for is dismissed at once, since no person is there to answer it: an
+`alert` closes, a `confirm` gives `false`, a `prompt` gives `null`, and the page stays when `beforeunload` asks.
+
+`browser.Dialog(answer, action, p)` answers the first dialog of `p`, its frames, tabs and popups, that opens during
+`action()`: `true` accepts it, `false` dismisses it, a text accepts a `prompt` with that text. It gives `{Type, Message,
+Default}`, `Type` one of `"alert"`, `"confirm"`, `"prompt"` and `"beforeunload"`, `Default` the text a `prompt` offered:
+
+```cesia norun
+defn removeFile(p)
+  d = browser.Dialog(true, () -> browser.Click(browser.ByRole("button", name = "Delete"), p), p)?
+  d.Message   (* "Delete the file?" *)
+end
+```
+
+A click that opens a dialog doesn't end until the dialog is answered, since the page waits for the person: `Dialog`
+answers it as soon as it opens, and gives its answer once the action has ended. No dialog within `timeout` seconds after
+the action is an `Err` of the kind `"timeout"`.
+
+### The console
+
+`browser.Console(p)` gives what the pages of `p`'s user context, `p` and its frames, tabs and popups, wrote in their
+console since `p` opened, oldest first: a list of `{Type, Text}`, `Type` the method of the console, as `"log"`, `"info"`,
+`"warn"`, `"error"` or `"debug"`, or `"exception"` for an error that no code of the page caught. A test can check that a
+page threw nothing:
+
+```cesia norun
+use std/value
+
+defn isQuiet(p)
+  thrown = [e for e in browser.Console(p)? if e.Type == "exception"]
+  value.Len(thrown) == 0
+end
+```
+
+It keeps the last 1,000 entries of a user context, each cut to its first 16,384 characters, so that a page that logs
+without end can't fill the program's memory. It asks Firefox nothing: Ceti keeps the entries as they come.
+
 ## Screenshots
 
 `browser.Screenshot` gives the bytes of a PNG image of the viewport, or of the whole page with `full = true`. The bytes are

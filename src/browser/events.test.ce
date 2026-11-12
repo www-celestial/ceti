@@ -1,0 +1,79 @@
+(* Dialogs, the console, tabs and popups, the network and downloads, in headless Firefox against tests/pages and a few
+   answers of the test's own server. The tests start Firefox in a kept folder of their own. *)
+use std/dict
+use std/fiber
+use std/http
+use std/json
+use std/list
+use std/net
+use std/result
+use std/sys
+use std/test
+use std/text
+use std/value
+
+kept = ".cesia/firefox/events"
+
+defn served(hits)
+  (** tests/pages and /api/items and /api/save, on a free port; each request of /api sends its path on hits. *)
+  l = net.Listen(0)?
+  items = defn (r)
+    fiber.Send("items", hits)
+    http.Json(["real"])
+  end
+  saved = defn (r)
+    fiber.Send("save", hits)
+    http.Plain("for real")
+  end
+  fiber.Spawn(() -> http.Serve(http.App() then http.Get("/api/items", items) then http.Post("/api/save", saved) then http.Static("/", "tests/pages"), listener = l))
+  result.Ok("http://127.0.0.1:$(net.Port(l))")
+end
+
+defn on(f)
+  (** f(p, hits) on a new page at events.html, in a new Firefox. *)
+  hits = fiber.Channel(size = 100)
+  url = "$(served(hits)?)/events.html"
+  Firefox(defn (b)
+    p = NewPage(b)?
+    Go(url, p)?
+    f(p, hits)
+  end, kept)
+end
+
+panicky(f) = fiber.Wait(fiber.Spawn(f)).Error.Message   (* The message of the panic of f(), or missing. *)
+
+defn isDialogs()
+  on(defn (p, hits)
+    a = Dialog(true, () -> Click("#alert", p), p)?
+    c = Dialog(true, () -> Click("#confirm", p), p)?
+    confirmed = Text("#said", p)?
+    q = Dialog("Ana", () -> Click("#prompt", p), p)?
+    named = Text("#said", p)?
+    late = Dialog(false, () -> Click("#later", p), p)?
+    Click("#confirm", p)?
+    list.All([
+      value.Equal(a, {Type: "alert", Message: "hello", Default: missing}),
+      c.Message == "Delete the file?" and confirmed == "confirmed: true",
+      q.Default == "nobody" and named == "name: Ana",
+      late.Message == "late" and Text("#said", p)? == "confirmed: false",
+      Dialog(true, () -> Click("h1", p), p, timeout = 0.2).Error.Kind == "timeout",
+      Dialog(true, () -> result.Err("mine"), p).Error == "mine"])
+  end)
+end
+
+defn isConsole()
+  on(defn (p, hits)
+    Click("#log", p)?
+    Click("#boom", p)?
+    _ = Eval("new Promise((done) => setTimeout(done, 100))", p)?
+    seen = Console(p)?
+    _ = Eval("for (let i = 0; i < 1500; i++) console.log('line ' + i); 'x'.repeat(20000)", p)?
+    _ = Eval("console.log('x'.repeat(20000))", p)?
+    flood = Console(p)?
+    list.All([
+      value.Equal(list.Take(3, seen), [{Type: "log", Text: "one 2"}, {Type: "warn", Text: "careful"}, {Type: "error", Text: "bad"}]),
+      seen[4].Type == "exception" and text.Contains("boom", seen[4].Text),
+      value.Len(flood) == 1000,
+      value.Len(flood[1000].Text) == 16384])
+  end)
+end
