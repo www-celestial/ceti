@@ -1,0 +1,56 @@
+(* The downloads of a page, which go only where the program says. *)
+use std/dict
+use std/math
+use std/path
+use std/result
+use std/sys
+use std/text
+
+defn Download(action, to, p, timeout = DefaultTimeout)
+  (** Runs action() and saves at the path to the file that a page of p's user context downloads meanwhile, once it is
+      complete: an Ok of {Url, Name}, Name the name the page gave it. The page chooses nothing of where the file lands:
+      Firefox writes it in a folder of the profile, then Ceti moves it with sys.Rename, which needs write= for to; to
+      another disk, it copies it, up to 256 MiB.
+      Downloads that no Download waits for are refused, as Firefox would else write them in the user's download folder.
+      An Err of the kind "timeout" when no download ended within timeout seconds after the action, of the kind
+      "browser" when it failed, Cesia's Err when to isn't allowed, or the action's Err. *)
+  s = p.session
+  uc = p.userContext
+  rel = "$(s.profile)/downloads-$(math.Div(sys.Now() * 1000000, 1))"
+  sys.Mkdir(rel)?
+  folder = absolute(rel, s)?
+  call("browser.setDownloadBehavior", {downloadBehavior: {type: "allowed", destinationFolder: folder}, userContexts: [uc]}, s)?
+  sub = call("session.subscribe", {events: ["browsingContext.downloadEnd"], userContexts: [uc]}, s)
+  got = if result.IsOk(sub) during(["browsingContext.downloadEnd"], e -> dict.GetOr("userContext", "", e) == uc, action, p, timeout) else sub end
+  if result.IsOk(sub)
+    _ = call("session.unsubscribe", {subscriptions: [sub.Value.subscription]}, s)
+  end
+  _ = call("browser.setDownloadBehavior", {downloadBehavior: missing, userContexts: [uc]}, s)
+  moved = if result.IsOk(got) saved(got.Value, folder, rel, to) else got end
+  _ = removeTree(rel)
+  moved
+end
+
+(* The largest download that Ceti copies, through the memory, to another disk than the profile's, in bytes. *)
+maxCopy = 268435456
+
+defn saved(e, folder, rel, to)
+  (** Moves a complete download from the folder of the profile to the path to, once its path is known to be right in
+      that folder: a message of Firefox is read as any other input. *)
+  if dict.GetOr("status", "", e) != "complete"
+    return result.Err({Kind: "browser", Message: "The download of $(dict.GetOr("url", "", e)) was $(dict.GetOr("status", "not complete", e))."})
+  end
+  name = path.Base(dict.GetOr("filepath", "", e))
+  if name == "" or name == "." or name == ".." or e.filepath != "$folder/$name"
+    return result.Err({Kind: "browser", Message: "Firefox saved the download out of its folder: $(e.filepath)."})
+  end
+  staged = "$rel/$name"
+  if result.IsErr(sys.Rename(staged, to))
+    size = sys.Stat(staged)?.Size
+    if size > maxCopy
+      return result.Err({Kind: "browser", Message: "Download: $to is on another disk than the profile, and the file, $size bytes, is too large to copy through the memory."})
+    end
+    sys.Write(to, sys.Read(staged)?)?
+  end
+  result.Ok({Url: dict.GetOr("url", "", e), Name: name})
+end

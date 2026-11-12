@@ -515,6 +515,24 @@ end
 
 A request that fails, as one that no server answers, is an `Err` of the kind `"browser"`.
 
+### Downloads
+
+A page's downloads are refused, all of them: without that, a headless Firefox saves what a page downloads in the
+user's download folder, where the program never allowed a write. `browser.Download(action, to, p)` runs `action()` and
+saves at the path `to` the file that a page of `p`'s user context downloads meanwhile, once it is complete:
+
+```cesia norun
+defn export(p)
+  d = browser.Download(() -> browser.Click(browser.ByRole("link", name = "Export"), p), "out/report.csv", p)?
+  d.Name   (* "report.csv", the name the page gave it; the file is at out/report.csv *)
+end
+```
+
+It gives `{Url, Name}`. The page chooses nothing of where the file lands: during the action, Firefox may download into a
+folder of the profile only, then Ceti moves the file to `to` with `sys.Rename`, which needs `write=` for it; to another
+disk than the profile's, it copies the file through the memory, up to 256 MiB. No download that ends within `timeout`
+seconds after the action is an `Err` of the kind `"timeout"`, a download that failed one of the kind `"browser"`.
+
 ## Screenshots
 
 `browser.Screenshot` gives the bytes of a PNG image of the viewport, or of the whole page with `full = true`. The bytes are

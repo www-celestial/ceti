@@ -139,3 +139,19 @@ defn isTabsAndPopups()
 end
 
 browserError(r) = r.Error.Kind
+
+defn isDownload()
+  on(defn (p, hits)
+    dir = test.Temp()
+    Click("#export", p)?
+    _ = Eval("new Promise((done) => setTimeout(done, 300))", p)?
+    d = Download(() -> Click(ByRole("link", name = "Export"), p), "$dir/report.csv", p)?
+    list.All([
+      d.Name == "report.csv" and text.EndsWith("/report.csv", d.Url),
+      sys.Read("$dir/report.csv")? == "id,name\n1,Ana\n",
+      value.Equal(sys.List(dir)?, ["report.csv"]),
+      text.Contains("Permission \"write\" denied", panicky(() -> Download(() -> Click("#export", p), "/report.csv", p))),
+      Download(() -> Click("h1", p), "$dir/none.csv", p, timeout = 0.2).Error.Kind == "timeout",
+      value.Equal(sys.List(dir)?, ["report.csv"])])
+  end)
+end
