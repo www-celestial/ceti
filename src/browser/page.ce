@@ -17,9 +17,10 @@ use std/value
       DefaultTimeout --> 5 *)
 DefaultTimeout = 5
 
-(* A page: a top-level browsing context, in a user context of its own. home is the tab Firefox opened at its start when
-   this page opened beside it, else missing. *)
-struct page { context, userContext, home, session }
+(* A page: a browsing context and its user context. kind is "page" for a top-level one that owns its user context,
+   "tab" for one that shares it, "frame" for a frame. home is the tab Firefox opened at its start when this page opened
+   beside it, else missing. *)
+struct page { context, userContext, home, session, kind }
 
 (* The margin, in seconds, that a wait in the page has before Cesia stops waiting for its answer. *)
 margin = 1
@@ -39,18 +40,34 @@ defn NewPage(b)
     _ = call("browser.removeUserContext", {userContext: uc}, b)
     return made
   end
-  result.Ok(page(made.Value.context, uc, if result.IsOk(beside) beside.Value else missing end, b))
+  result.Ok(page(made.Value.context, uc, if result.IsOk(beside) beside.Value else missing end, b, "page"))
 end
 
 defn ClosePage(p)
-  (** Closes a page and its user context: Ok(missing), or an Err. A program that opens many pages closes each one; the
-      pages that are still open close with the browser. *)
+  (** Closes a page and its user context, with its tabs and popups; a tab or a popup alone: Ok(missing), or an Err. A
+      program that opens many pages closes each one; the pages that are still open close with the browser. A frame
+      closes with its page, so ClosePage of one is a bug: it panics. *)
+  if p.kind == "frame"
+    bug.Panic("ClosePage closes a page, a tab or a popup, not a frame: a frame closes with its page.")
+  end
+  if p.kind == "tab"
+    call("browsingContext.close", {context: p.context}, p.session)?
+    return result.Ok(missing)
+  end
   call("browser.removeUserContext", {userContext: p.userContext}, p.session)?
   fiber.Send({Forget: p.userContext}, p.session.requests)
   if not value.IsMissing(p.home)
     fiber.Send(p.home, p.session.home)
   end
   result.Ok(missing)
+end
+
+defn Frame(selector, p, timeout = DefaultTimeout)
+  (** The frame of the first iframe or frame of a selector, once it is there, shown or not, as a page: every function
+      of a page works in it, its own origin or another. It closes with its page. An Ok of it, or an Err of the kind
+      "timeout"; an element that is no frame is a bug, so it panics. *)
+  got = seek(selector, "frame", p, timeout)?
+  result.Ok(page(got.value.context, p.userContext, missing, p.session, "frame"))
 end
 
 defn Go(url, p, timeout = DefaultTimeout)

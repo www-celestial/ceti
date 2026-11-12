@@ -111,6 +111,24 @@ window costs about 0.2 s, against 0.09 s for the first.
 `browser.ClosePage` closes a page and its user context. The pages still open close with the browser, so a program needs
 it only when it opens many pages.
 
+### Frames
+
+A **frame**, the page that an `<iframe>` shows inside another, has its own document: a selector of the page doesn't
+look into it. `browser.Frame(sel, p)` waits for an `iframe` or a `frame` of the selector, shown or not, and gives its
+frame as a page, whose functions all work in it, of the page's origin or of another one, as a form of payment served
+by a bank:
+
+```cesia norun
+defn pay(p)
+  card = browser.Frame("#payment", p)?
+  browser.Type(browser.ByLabel("Card number"), "4242 4242 4242 4242", card)?
+  browser.Click(browser.ByRole("button", name = "Pay"), card)
+end
+```
+
+A frame closes with its page, so `browser.ClosePage` of a frame is a bug: it panics. A frame that its page removed gives
+an `Err` of the kind `"browser"`, `no such frame`.
+
 `browser.Go` goes to a URL and waits for its `load` event, the moment when the page and its images, styles and scripts
 have loaded. An address that can't be reached is an `Err` of the kind `"browser"`.
 
