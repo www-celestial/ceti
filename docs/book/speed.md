@@ -1,11 +1,12 @@
 # Speed
 
-This page says what each step of Ceti costs, and where the time goes. Every number was measured on one machine
-(8 cores, Linux 7.2, Firefox 159.0 headless, Cesia 1.1.0+dev), on 12 November 2026, against the same scenario driven
-through raw WebDriver BiDi from Node 26: the same page, the same Firefox, a fresh profile for each run. Raw BiDi is the
-floor: the protocol's own messages, written by hand, with no wait, no check and no library around them. These steps were
-measured with Ceti v1, which started each Firefox on an empty profile; [The template profile](#the-template-profile)
-gives the start and the end of Firefox since Ceti copies a template.
+This page says what each step of Ceti costs, and where the time goes. Every number was measured on one machine (8
+cores, Linux 7.2, Cesia 1.1.0+dev, Firefox headless), against the same steps driven through raw WebDriver BiDi from Node
+26: the same page, the same Firefox. Raw BiDi is the floor: the protocol's own messages, written by hand, with no wait,
+no check and no library around them. The steps of v1 were measured on 12 November 2026 with Firefox 159.0 and Ceti v1,
+which started each Firefox on an empty profile; [The template profile](#the-template-profile) gives the start and the
+end of Firefox since Ceti copies a template, and [The steps of complete automation](#the-steps-of-complete-automation)
+the steps that came after, on 13 November with Firefox 160.0.
 
 ## How it was measured
 
@@ -71,6 +72,105 @@ The template profile added about 60 lines of code to Ceti: a program that uses i
 [+0.06, +0.41] (8.40 ms against 8.22 ms for v1, on 12 November, 21 runs of each, alternated), against 1.1 s saved at
 each start of Firefox. Cesia compiles a function at its first call, but reads, parses and resolves every line of a
 package when a program loads it: the cost follows the lines of code, and comments cost nothing.
+
+## The steps of complete automation
+
+Measured on 13 November 2026, with Firefox 160.0 and the template profile: 21 rounds, all in one hold of the machine's
+lock, so that no other heavy work ran meanwhile. In each round, main's Ceti, which has the steps of v1 only, and this
+Ceti ran the same program in turn, the order switched at each round; then this Ceti ran each new step once cold and 11
+times warm in one browser, and raw BiDi from Node ran the same steps on the same page and in the same way. A cell is the
+median of the 21 rounds, then the first and the third quartile; a difference is that of the medians, with its 95%
+interval from 5,000 resamplings: an interval that holds 0 shows no difference that these rounds can see. Times in
+milliseconds.
+
+### The steps of v1
+
+The new parts must cost the old steps nothing. Since v1, the session asks for the events of the dialogs and of the
+console, refuses downloads, and the finder runs in a sandbox of BiDi, put there by the first wait in each document:
+
+| Step | main | this Ceti | difference |
+|---|---:|---:|---:|
+| ready: start Firefox, its WebSocket, the session | 1,021 [996–1,074] | 981 [946–1,022] | -39.5 [-83.3, +6.4] |
+| `NewPage` | 152 [131–160] | 118 [106–130] | -33.7 [-44.3, -15.5] |
+| `Go`, cold | 142 [129–161] | 116 [109–125] | -25.8 [-37.0, -14.6] |
+| `Go`, warm | 28.5 [26.5–31.4] | 28.4 [25.8–33.1] | -0.1 [-2.9, +4.2] |
+| `Type`, cold | 63.3 [59.4–70.7] | 75.8 [62.7–82.2] | +12.4 [-0.1, +18.2] |
+| `Click`, cold | 19.1 [17.3–21.9] | 18.7 [16.9–19.8] | -0.3 [-2.4, +1.3] |
+| `Click`, warm | 6.0 [5.0–7.3] | 5.0 [4.6–5.6] | -1.0 [-2.0, -0.1] |
+| `Text`, warm | 1.3 [1.0–1.6] | 0.9 [0.8–1.2] | -0.3 [-0.6, -0.1] |
+| `Eval("1")`, warm | 0.6 [0.5–0.7] | 0.6 [0.6–0.7] | +0.0 [-0.1, +0.1] |
+| `Screenshot`, warm | 21.4 [20.0–23.7] | 21.4 [20.2–24.2] | -0.0 [-2.2, +2.2] |
+| `ClosePage` | 19.8 [18.0–22.6] | 16.9 [16.7–18.9] | -2.8 [-4.6, -1.1] |
+| quit | 303 [285–368] | 294 [284–342] | -8.5 [-38.2, +27.3] |
+| the whole run | 2,654 [2,461–2,992] | 2,396 [2,335–2,593] | -258 [-485, -62.6] |
+
+### The new steps
+
+Raw BiDi is the floor: the protocol's messages written by hand, with no wait, no check and no matching. "Cold" is the
+first call in the browser:
+
+| Step | Ceti, warm | Ceti, cold | raw BiDi, warm | Ceti − raw, warm | what raw BiDi does |
+|---|---:|---:|---:|---:|---|
+| `Click("#save")` | 5.4 [5.0–6.1] | 57.3 | 6.0 [5.4–6.6] | -0.6 [-1.0, +0.2] | find the button, click |
+| `Click(ByRole("button", name = "Save"))` | 4.8 [4.5–5.9] | 6.3 | 11.9 [11.5–12.8] | -7.1 [-7.8, -6.3] | Firefox's `accessibility` locator, click |
+| `Text(ByTestId("said"))` | 1.0 [0.9–1.3] | 1.5 | 0.8 [0.7–1.0] | +0.2 [+0.1, +0.4] | `script.evaluate` of `innerText` |
+| `Text(ByText("Task 2"))` | 1.2 [1.1–1.6] | 1.9 | — | — | — |
+| `Type(ByLabel("Email"), ...)`, 15 keys | 16.1 [15.4–17.7] | 25.2 | — | — | — |
+| `Value(ByLabel("Email"))` | 1.2 [1.1–1.4] | 1.6 | — | — | — |
+| `Select(ByLabel("Country"), "Spain")` | 1.2 [1.2–1.5] | 1.4 | 0.7 [0.7–0.8] | +0.5 [+0.4, +0.7] | set the option, send the events |
+| `Check` / `Uncheck` | 6.9 [6.5–7.5] | 9.3 | 11.1 [11.0–12.1] | -4.3 [-5.0, -3.6] | find the box, click |
+| `Upload` | 2.1 [1.8–2.3] | 2.7 | 1.7 [1.6–1.8] | +0.4 [+0.1, +0.5] | find the field, `input.setFiles` |
+| `Hover` | 2.6 [2.2–2.9] | 3.4 | 2.4 [2.3–2.7] | +0.2 [-0.3, +0.3] | find, move the mouse |
+| `Drag` | 83.8 [83.6–86.0] | 80.7 | 83.4 [83.2–83.7] | +0.4 [+0.1, +1.6] | find both, the same moves |
+| `Wheel("#box", 100)` | 33.3 [33.2–33.3] | 30.7 | 1.5 [1.4–1.6] | +31.8 [+31.7, +31.8] | the wheel action alone |
+| `Frame("#pay")` | 0.8 [0.8–0.9] | 1.7 | 0.4 [0.3–0.4] | +0.5 [+0.4, +0.5] | `browsingContext.getTree` |
+| `Text` in a frame | 0.8 [0.7–0.8] | 5.4 | 0.6 [0.6–0.7] | +0.2 [+0.1, +0.3] | `script.evaluate` in the frame |
+| `Dialog(true, click)` | 43.4 [40.9–47.4] | 71.1 | 44.4 [40.4–48.9] | -1.1 [-6.7, +3.9] | click, event, `handleUserPrompt` |
+| `Console` | 0.0 [0.0–0.0] | 0.0 | — | — | — |
+| `Response("/api/data", click)` | 14.8 [14.1–16.3] | 39.8 | 17.3 [15.3–20.5] | -2.5 [-4.5, -0.8] | subscribe, collector, click, event, data, unsubscribe |
+| a `fetch` of the page | 2.3 [2.2–2.4] | 2.8 | 2.8 [2.6–3.2] | -0.6 [-0.8, -0.4] | the same |
+| a `fetch` that a `Route` answers | 3.1 [2.9–4.0] | 3.5 | 3.6 [3.3–4.2] | -0.4 [-1.0, +0.0] | intercept, event, `provideResponse` |
+| `Popup(click)` and `ClosePage` | 81.7 [76.5–95.0] | 102 | 86.2 [71.3–97.6] | -4.5 [-15.0, +9.9] | subscribe, click, created, load, close |
+| `NewTab` and `ClosePage` | 207 [202–215] | 195 | 216 [202–223] | -9.5 [-15.0, +3.7] | create a window, close it |
+| `State` | 2.0 [1.5–3.3] | 25.5 | 2.2 [1.8–2.9] | -0.2 [-0.9, +0.4] | `getCookies`, `localStorage` |
+| `NewPage(b, state = s)` and `ClosePage` | 363 [344–383] | 331 | — | — | — |
+| `NewPage` and `ClosePage` | 219 [211–225] | 220 | 232 [216–241] | -13.4 [-22.2, -0.8] | user context, window, removal |
+| `Emulate(viewport = ...)` | 3.5 [1.8–7.8] | 32.0 | 5.8 [2.1–10.8] | -2.3 [-6.9, +0.9] | `setViewport` |
+| `Download(click, to)` | 27.1 [25.5–32.5] | 63.5 | — | — | — |
+| `Screenshot(of = "#list")` | 7.0 [6.8–7.5] | 12.3 | 7.1 [6.7–8.0] | -0.1 [-0.7, +0.2] | find, `captureScreenshot` with `clip` |
+| `Pdf` | 1,828 [1,827–1,831] | 1,844 | 1,826 [1,824–1,828] | +1.4 [-0.6, +4.6] | `browsingContext.print` |
+
+What the numbers say:
+
+- **Naming by role costs nothing.** `Click(ByRole("button", name = "Save"))` takes what a click by CSS takes, as Ceti
+  matches roles and names in the page, in the round trip of its wait. Raw BiDi's own way, the `accessibility` locator of
+  Firefox, takes 2.5 times as long warm, and its first call, which starts Firefox's accessibility service, 156 ms
+  against 6.3.
+- **Most steps are within half a millisecond of raw BiDi**, waits and checks included: `Text`, `Select`, `Upload`,
+  `Hover`, `Drag`, `Frame`, a routed `fetch`, `State`, `Screenshot(of =)`; `Response`, `Popup`, `NewTab`, `NewPage` and
+  `Emulate` are a little faster than the hand-written forms here, which wait for each answer in turn.
+- **`Check` is faster than raw BiDi's find and click**, which asks Firefox's accessibility tree for the box by its
+  label: Ceti finds it in the page.
+- **`Wheel` costs about 30 ms more** than the wheel action alone: Firefox scrolls on a thread of its own and the page
+  learns it a frame or two later, and `Wheel` answers once the page has seen it, so that what comes next sees the page
+  scrolled.
+- **`Drag` takes about 84 ms**, in both: its move to the target lasts 60 ms, in steps, as libraries of sortable lists
+  need several moves to start a drag.
+- **`Pdf` takes about 1.8 s**, all in Firefox. **`NewPage(b, state = s)`** adds about 0.14 s to `NewPage`: a cookie is
+  one command, and the storage of an origin a page that Ceti answers itself.
+- **The first wait in a document puts the finder in its sandbox**, about 3 ms once per document, which the cold
+  steps hold. Before the finder lived there, each wait sent its 11.7 KB of JavaScript, which Firefox read again at
+  each call: `Text` took 2.5 ms. A preload script that put it in every document cost 2.7 ms at each `Go` and 15 ms at
+  each `NewPage` (11 rounds), so the first wait does it.
+
+### The start of a program that loads Ceti
+
+A program that loads Ceti and prints a number starts in 10.9 ms [10.6–11.2] against 8.1 ms [8.0–8.4] with main's Ceti:
++2.9 ms, 95% interval [+2.5, +3.0] (21 runs of each, alternated, in the same hold of the lock). Ceti has 657 more lines
+of Cesia than main, its docstrings counted, so about 4 µs a line: Cesia reads, parses and resolves every line of a
+package when a program loads it. The JavaScript, 11.7 KB of text, costs about 0.15 ms of it (the fastest five runs of
+each, with it and with one character in its place). It is about a third of a percent of the second that Firefox then
+takes to be ready, and Cesia's cache of loaded packages, being built, would take most of it away.
 
 ## The template profile
 

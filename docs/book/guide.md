@@ -87,6 +87,13 @@ A Cesia program touches nothing outside itself unless its command line allows it
 `net=127.0.0.1` opens every port of this machine to the program: a narrower permission would need a new kind of
 permission in Cesia, for the ports of the programs it started.
 
+Two more, for some functions only: `read=` for the files that `browser.Upload` gives a page, and `write=` for the path
+where `browser.Download` saves a file.
+
+**Private folders.** Cesia makes folders that others on the machine can read (0755) and files they can read (0644),
+and a profile holds the cookies and the storage of its pages while Firefox runs. Keep the folder given to `Firefox`
+under a home that is yours alone, as most systems make it (0700).
+
 ## Pages
 
 `browser.NewPage` opens a page in a **user context** of its own: a set of cookies, storage and cache that no other user
@@ -108,8 +115,11 @@ its frames as rarely, which would make the waits slow and the page unlike the re
 the tab Firefox opened at its start, and while it is open, the others open in windows of their own. Opening a page in a
 window costs about 0.2 s, against 0.09 s for the first.
 
-`browser.ClosePage` closes a page and its user context. The pages still open close with the browser, so a program needs
-it only when it opens many pages.
+`browser.ClosePage` closes a page and its user context, with its tabs and popups. The pages still open close with the
+browser, so a program needs it only when it opens many pages.
+
+`browser.Go` goes to a URL and waits for its `load` event, the moment when the page and its images, styles and scripts
+have loaded. An address that can't be reached is an `Err` of the kind `"browser"`.
 
 ### The state of a session
 
@@ -200,9 +210,6 @@ end
 A frame closes with its page, so `browser.ClosePage` of a frame is a bug: it panics. A frame that its page removed gives
 an `Err` of the kind `"browser"`, `no such frame`.
 
-`browser.Go` goes to a URL and waits for its `load` event, the moment when the page and its images, styles and scripts
-have loaded. An address that can't be reached is an `Err` of the kind `"browser"`.
-
 ## Finding an element
 
 Every function that looks for an element takes a **selector**: a CSS text, or a **locator**, which names the element as
@@ -272,8 +279,8 @@ The function looks again at each frame the page draws (`requestAnimationFrame`) 
 (`MutationObserver`), and answers as soon as it finds one, or when its time is over. The wait is done in the page, in one
 **round trip** (one message to Firefox and its answer), rather than by asking the page again and again from Cesia.
 The function runs in Ceti's **sandbox** of the page, a realm of BiDi that sees the page's DOM but not its scripts: a
-page that changes `JSON.parse` or `querySelectorAll` for itself changes nothing for Ceti. A preload script puts it there
-once for each document of the page, so each wait sends a call of a few bytes, not the function. If
+page that changes `JSON.parse` or `querySelectorAll` for itself changes nothing for Ceti. The first wait in a document
+puts the function there, once, so each wait after it sends a call of a few bytes, not the function. If
 the page goes to another address meanwhile, the function answers so as it leaves, and Ceti looks again in the new page,
 until the time is over.
 
@@ -518,6 +525,23 @@ end
 
 A request that fails, as one that no server answers, is an `Err` of the kind `"browser"`.
 
+To see a request itself, as the body that a form sends, a route that gives `missing` sees each request on its way and
+lets it go on: its handler can hand the request to a channel of `std/fiber`, which the test then reads.
+
+```cesia norun
+use std/fiber
+
+defn sent(p)
+  seen = fiber.Channel(size = 10)
+  browser.Route("/api/*", defn (r)
+    fiber.Send(r, seen)
+    missing
+  end, p)?
+  browser.Click(browser.ByRole("button", name = "Save"), p)?
+  fiber.Receive(seen, timeout = 5)
+end
+```
+
 ### Downloads
 
 A page's downloads are refused, all of them: without that, a headless Firefox saves what a page downloads in the
@@ -642,5 +666,6 @@ leaves Firefox running: nothing can run after it.
 
 ## Not yet
 
-Chrome and Edge, which serve BiDi through ChromeDriver; frames; the network and the console; files to upload; several
-windows of one page; phones; PDF and video. Each will come when a real need asks for it.
+Chrome and Edge, which serve BiDi through ChromeDriver, and need Chrome on the machine; the drag and drop of HTML,
+which Firefox 160 headless doesn't end; a touch screen, which Firefox 160 has no command to emulate; the back and
+forward buttons; video. Each will come when a real need asks for it.
