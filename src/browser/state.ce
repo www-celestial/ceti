@@ -17,6 +17,7 @@ defn State(p)
       Expires}, Expires in seconds since 1970 or missing for a cookie of the session, and Storage the localStorage of the
       page's origin, {origin: {key: value}}. BiDi reads no localStorage of another origin. NewPage(b, state = s) starts a
       page with it. *)
+  landed(p, "State", DefaultTimeout)?
   got = call("storage.getCookies", {partition: {type: "storageKey", userContext: p.userContext}}, p.session)?
   cookies = [{Name: c.name, Value: textOf(c.value)?, Domain: c.domain, Path: c.path, HttpOnly: c.httpOnly, Secure: c.secure,
     SameSite: c.sameSite, Expires: dict.GetOr("expiry", missing, c)} for c in got.cookies]

@@ -14,9 +14,11 @@ defn Select(selector, labels, p, timeout = DefaultTimeout)
       enabled, and for those options, which a page may add late. Firefox draws the list of a select outside the page,
       where the mouse of BiDi can't reach, so Ceti makes the choice in the page and sends the events input and change,
       as the browser does after a person's choice; their isTrusted is false. Ok(missing), or an Err of the kind
-      "timeout" that names the option missing. A select of one option given several labels is a bug: it panics. *)
+      "timeout" that names the option missing. A choice that takes the page to another document, by a script of the
+      page, waits for it as Click does. A select of one option given several labels is a bug: it panics. *)
+  until = sys.Now() + timeout
   seek(selector, "select", p, timeout, arg = json.Text(if value.IsText(labels) [labels] else labels end))?
-  result.Ok(missing)
+  landed(p, says(selector), timeout, until = until)
 end
 
 Check(selector, p, timeout = DefaultTimeout) = tick(selector, true, p, timeout)   (** Checks a checkbox or a radio, an input or an element of the role checkbox, radio or switch: when it isn't checked, clicks it as Click does, then waits until it is. Ok(missing), or an Err of the kind "timeout". *)
@@ -28,9 +30,8 @@ defn tick(selector, on, p, timeout)
   until = sys.Now() + timeout
   got = seek(selector, "check", p, timeout, arg = "$on")?
   if dict.Has("sharedId", got)
-    press(got, p)?
-    left = until - sys.Now()
-    seek(selector, "checked", p, if left < 0 0 else left end, arg = "$on")?
+    press(got, p, says(selector), timeout, until)?
+    seek(selector, "checked", p, left(until), arg = "$on")?
   end
   result.Ok(missing)
 end

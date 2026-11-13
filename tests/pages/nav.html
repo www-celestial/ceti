@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Nav</title></head>
+<body>
+<p id="here">the first page</p>
+<form method="post" action="/next"><input id="field" name="n" value="x"><button id="post">Post</button></form>
+<a id="later" href="/later">Later</a>
+<a id="nothing" href="/nothing">Nothing</a>
+<a id="slow" href="/slow">Slow</a>
+<a id="export" href="report.csv" download>Export</a>
+<a id="attach" href="/attach">Attach</a>
+<button id="idle" type="button">Idle</button>
+<button id="stop" type="button" onclick="location.href = '/slow'; setTimeout(() => stop(), 50)">Stop</button>
+<iframe id="inner" srcdoc="<a id='top' target='_top' href='/later'>Top</a>"></iframe>
+</body>
+</html>

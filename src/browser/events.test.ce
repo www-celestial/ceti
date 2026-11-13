@@ -174,3 +174,29 @@ defn isUntrustedMessages()
     value.Equal(requestOf({request: 5}), {}),
     value.Equal(requestOf({request: {url: "u"}}), {url: "u"})])
 end
+
+defn isNavigationsFollowed()
+  (** The dispatcher's view of the navigations under way: a start, the end of that navigation only, a later one in
+      its place; the messages of Firefox read as any input, wrong-typed fields changing nothing; and no more contexts
+      than maxGoing. *)
+  start(ctx, nav) = {context: ctx, navigation: nav, url: "http://x/$nav"}
+  one = followed(dict.Dict(), "browsingContext.navigationStarted", start("c", "n1")).Going
+  two = followed(one, "browsingContext.navigationStarted", start("c", "n2")).Going
+  ends = [followed(two, m, {context: "c", navigation: "n2"}) for m in navigationEnds]
+  many = dict.Dict([{Key: "c$k", Value: {Navigation: "n", Url: ""}} for k in 1..maxGoing])
+  same(r, going) = value.IsMissing(r.Ended) and value.Equal(r.Going, going)
+  list.All([
+    value.Equal(one, dict.Put("c", {Navigation: "n1", Url: "http://x/n1"}, dict.Dict())),
+    value.Equal(two, dict.Put("c", {Navigation: "n2", Url: "http://x/n2"}, dict.Dict())),
+    list.All([r.Ended == "c" and value.Len(r.Going) == 0 for r in ends]),
+    same(followed(two, "browsingContext.load", {context: "c", navigation: "n1"}), two),
+    same(followed(two, "browsingContext.load", {context: "d", navigation: "n2"}), two),
+    same(followed(two, "network.fetchError", {context: "c", navigation: missing}), two),
+    same(followed(two, "browsingContext.domContentLoaded", {context: "c", navigation: "n2"}), two),
+    same(followed(two, "browsingContext.load", {context: 5, navigation: "n2"}), two),
+    same(followed(two, "browsingContext.navigationStarted", {context: "c", navigation: ["n3"]}), two),
+    same(followed(one, "browsingContext.load", {}), one),
+    followed(dict.Dict(), "browsingContext.navigationStarted", {context: "c", navigation: "n", url: 7}).Going["c"].Url == "",
+    same(followed(many, "browsingContext.navigationStarted", start("new", "n")), many),
+    followed(many, "browsingContext.navigationStarted", start("c1", "m")).Going["c1"].Navigation == "m"])
+end

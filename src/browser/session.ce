@@ -84,12 +84,15 @@ end
 defn dispatch(c, requests, gone)
   (** The fiber that owns the connection, until it ends or a Stop comes. A request gets the next id and is written; an
       answer goes to the request of its id, as an Ok of its result or an Err; an event goes to the watches that take it.
-      A prompt that no watch takes is dismissed, and the console's entries are kept for each user context. At the end,
-      the requests that wait get an Err of the kind "closed", as do those that come after. *)
+      A prompt that no watch takes is dismissed, and the console's entries are kept for each user context. It follows
+      the navigation under way in each browsing context, and holds each Settle until that navigation has ended. At the
+      end, the requests that wait get an Err of the kind "closed", as do those that come after. *)
   s = {requests: requests, gone: gone}
   waiting = dict.Dict()
   watches = dict.Dict()
   logs = dict.Dict()
+  going = dict.Dict()
+  held = dict.Dict()
   next = 0
   while true
     got = fiber.Select([requests, c.Messages])
@@ -111,6 +114,13 @@ defn dispatch(c, requests, gone)
         fiber.Send(result.Ok(dict.GetOr(r.Console, [], logs)), r.Reply)
       else if dict.Has("Forget", r)
         logs = dict.Drop(r.Forget, logs)
+      else if dict.Has("Settle", r)
+        if dict.Has(r.Settle, going)
+          fiber.Send(result.Ok(going[r.Settle].Url), r.Reply)
+          held[r.Settle] = list.Append(r.Reply, dict.GetOr(r.Settle, [], held))
+        else
+          fiber.Send(result.Ok(missing), r.Reply)
+        end
       else
         sent = websocket.Send(json.Text({id: next, method: r.Method, params: r.Params}), c)
         if result.IsOk(sent)
@@ -129,6 +139,14 @@ defn dispatch(c, requests, gone)
       else if dict.GetOr("type", "", m) == "event" and value.IsDict(dict.GetOr("params", missing, m))
         e = m.params
         method = dict.GetOr("method", "", m)
+        moved = followed(going, method, e)
+        going = moved.Going
+        if not value.IsMissing(moved.Ended)
+          for reply in dict.GetOr(moved.Ended, [], held)
+            fiber.Send(result.Ok(missing), reply)
+          end
+          held = dict.Drop(moved.Ended, held)
+        end
         taken = false
         owned = false
         for k in list.Reverse(list.Sort(dict.Keys(watches)))
@@ -158,6 +176,11 @@ defn dispatch(c, requests, gone)
   for reply in dict.Values(waiting)
     fiber.Send(lost(), reply)
   end
+  for replies in dict.Values(held)
+    for reply in replies
+      fiber.Send(lost(), reply)
+    end
+  end
   fiber.Close(gone)
   more = fiber.Receive(requests, timeout = 0)
   while result.IsOk(more)
@@ -167,6 +190,37 @@ defn dispatch(c, requests, gone)
     more = fiber.Receive(requests, timeout = 0)
   end
   _ = websocket.Close(c)
+end
+
+(* The events that end a navigation: its document has loaded, or it has none to bring, as it failed, became a
+   download, or its request ended with no document, for an answer 204 or a stop (Firefox 160 sends no
+   navigationAborted). *)
+navigationEnds = ["browsingContext.load", "browsingContext.navigationFailed", "browsingContext.downloadWillBegin", "network.fetchError"]
+
+(* How many browsing contexts may have a navigation under way at once in the dispatcher's eyes: a page that makes
+   frames without end can't fill the memory; past it, a new context's navigation isn't waited for. *)
+maxGoing = 1000
+
+defn followed(going, method, e)
+  (** The navigations under way, {context: {Navigation, Url}}, after an event: {Going, Ended}, Ended the context whose
+      navigation the event ended, or missing. A new navigation of a context takes the place of the one it had. The
+      event is read as any message of Firefox: a field of the wrong type leaves things as they were. *)
+  ctx = dict.GetOr("context", missing, e)
+  nav = dict.GetOr("navigation", missing, e)
+  if not value.IsText(ctx) or not value.IsText(nav)
+    return {Going: going, Ended: missing}
+  end
+  if method == "browsingContext.navigationStarted"
+    if not dict.Has(ctx, going) and value.Len(going) >= maxGoing
+      return {Going: going, Ended: missing}
+    end
+    url = dict.GetOr("url", "", e)
+    return {Going: dict.Put(ctx, {Navigation: nav, Url: if value.IsText(url) url else "" end}, going), Ended: missing}
+  end
+  if method in navigationEnds and dict.Has(ctx, going) and going[ctx].Navigation == nav
+    return {Going: dict.Drop(ctx, going), Ended: ctx}
+  end
+  {Going: going, Ended: missing}
 end
 
 (* The request of a network event, a dictionary, or {} for a message that holds none: the tests of the watches, which

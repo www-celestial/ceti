@@ -65,7 +65,7 @@ default.
 | `NewTab(p)` | Opens a page in the user context of `p`, as a second tab of one person. |
 | `ClosePage(p)` | Closes a page and its user context, or a tab or a popup alone. |
 | `Go(url, p)` | Goes to a URL and waits for its `load` event. |
-| `Click(sel, p)` | Waits for the element, scrolls it into view, and clicks its centre with the mouse. |
+| `Click(sel, p)` | Waits for the element, scrolls it into view, and clicks its centre with the mouse; when the click loads another page, it answers once that page has loaded. |
 | `Type(sel, text, p)` | Waits for the field, selects what it holds, and types `text` key by key: the field then holds `text`. |
 | `Press(key, p)` | Presses a key in the element that has the focus: `"Enter"`, `"Tab"`, `"a"`, `"Control+A"`. |
 | `Select(sel, labels, p)` | Chooses the options of a `<select>` by their labels. |
@@ -103,6 +103,11 @@ again at each frame and at each change of the page, and answers as soon as it fi
 wait takes one round trip**, rather than a loop of questions from the program. If the page goes to another address
 meanwhile, it looks again in the new one. Ceti's JavaScript runs in a sandbox of BiDi, which sees the page's DOM but not
 its scripts, so no page can change what it does.
+
+A click, or a key, that takes the page to another document, as a link or the button of a form does, answers once that
+document has loaded, as `Go` does, within its `timeout`: the next step reads the new page, and the server has
+answered. A click that loads nothing, or a navigation that brings no document, a download or an answer 204, waits for
+nothing.
 
 ## Errors
 

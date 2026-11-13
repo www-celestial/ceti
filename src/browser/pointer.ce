@@ -1,13 +1,15 @@
 (* The mouse and the wheel beyond a click: hover, drag, wheel. Each moves the mouse of input.performActions (W3C
    WebDriver BiDi §7.9.3.1), whose events are the browser's own. *)
 use std/result
+use std/sys
 
 
 defn Hover(selector, p, timeout = DefaultTimeout)
   (** Waits for the first visible element of a selector, scrolls it into view, and moves the mouse to its centre, as a
       person points at it: the page gets mouseover, mouseenter and mousemove. Ok(missing), or an Err of the kind
       "timeout". *)
-  act([mouse([toward(seek(selector, "point", p, timeout)?, 0)])], p)
+  until = sys.Now() + timeout
+  act([mouse([toward(seek(selector, "point", p, timeout)?, 0)])], p, says(selector), timeout, until)
 end
 
 defn Drag(from, to, p, timeout = DefaultTimeout)
@@ -16,10 +18,11 @@ defn Drag(from, to, p, timeout = DefaultTimeout)
       with the events of the mouse and of the pointer. The drag and drop of HTML, of an element draggable = true, doesn't
       end in Firefox 160 headless: dragstart, dragenter and dragover come, never drop. Ok(missing), or an Err of the
       kind "timeout". *)
+  until = sys.Now() + timeout
   a = seek(from, "point", p, timeout)?
   b = seek(to, "point", p, timeout)?
   step = {type: "pointerMove", x: 4, y: 4, origin: "pointer"}
-  act([mouse([toward(a, 0), {type: "pointerDown", button: 0}, step, toward(b, 60), toward(b, 0), {type: "pointerUp", button: 0}])], p)
+  act([mouse([toward(a, 0), {type: "pointerDown", button: 0}, step, toward(b, 60), toward(b, 0), {type: "pointerUp", button: 0}])], p, says(from), timeout, until)
 end
 
 defn Wheel(selector, dy, p, timeout = DefaultTimeout)
@@ -28,8 +31,9 @@ defn Wheel(selector, dy, p, timeout = DefaultTimeout)
       thread and the page learns it a frame or two later, so Wheel answers once the page has seen a scroll, or after
       six frames when nothing could scroll. An element wholly out of view is scrolled into it first. Ok(missing), or an
       Err of the kind "timeout". *)
+  until = sys.Now() + timeout
   at = seek(selector, "wheel", p, timeout)?
-  act([{type: "wheel", id: "wheel", actions: [{type: "scroll", x: at.x, y: at.y, deltaX: 0, deltaY: dy}]}], p)?
+  act([{type: "wheel", id: "wheel", actions: [{type: "scroll", x: at.x, y: at.y, deltaX: 0, deltaY: dy}]}], p, says(selector), timeout, until)?
   callFunction(scrolledJs, [], p, answerTime)?
   result.Ok(missing)
 end

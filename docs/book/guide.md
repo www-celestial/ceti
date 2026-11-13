@@ -304,9 +304,51 @@ At the end of its time, a wait gives an `Err` of the kind `"timeout"` that says 
 What the wait doesn't check: that the element has stopped moving, or that no other element covers it. A click on an
 element under another one hits the one on top, as a person's click would, and the test fails where it can be seen.
 
-A click that loads another page gives its answer once the click is done, not once the new page has loaded: a `Text` of
-an element that both pages have may read the old one. Wait for an element of the new page first, with `WaitFor` or a
-`Text` of it.
+### After a click that loads another page
+
+A click on a link or on the button of a form, a key that sends a form, or a script of the page that a click runs, can
+take the page to another document. Such a click answers once that document has loaded, as `Go` does, within the
+click's `timeout`: the next step reads the new page, never the one that went away, and the server has answered the
+request, so a test can look at its data at once. A click that loads nothing answers as soon as it is done. There is no
+function to call for it:
+
+```cesia norun
+defn signIn(p)
+  browser.Type(browser.ByLabel("Login"), "ana", p)?
+  browser.Click(browser.ByRole("button", name = "Sign in"), p)?   (* answers once the next page has loaded *)
+  browser.Text("h1", p)   (* the heading of the page that the form led to *)
+end
+```
+
+`Press`, `Type`, `Select`, `Check`, `Hover`, `Drag` and `Wheel` wait in the same way when what they do takes the page
+to another document. Ceti learns of each navigation from the events of BiDi: `browsingContext.navigationStarted` when
+it begins, which Firefox sends before it answers the click, then `browsingContext.load` when its document has loaded.
+A navigation that brings no document ends otherwise, and is waited for no more: `navigationFailed` when it failed or
+the page refused to leave, `downloadWillBegin` for a download, and `network.fetchError` for an answer
+`204 No Content` or a navigation that the page stopped. A page that hasn't loaded in time is an `Err` of the kind
+`"timeout"` that names it:
+
+```text
+#signin: the page was still loading http://127.0.0.1:8080/invoices after 5 s
+```
+
+Every step also waits first for a navigation under way in its page, whatever began it: a click in a frame whose link
+loads the whole page holds the next step on that page until the new document has loaded. A navigation that a script
+begins by itself later, as a timer that changes `location`, may begin while a step runs: `Text` and the other waits for
+an element then look again in the new document, but an `Eval` that was running there gets no value. `form.submit()`
+and `history.back()` begin their navigation a moment after the script that calls them has ended, so after an `Eval` of
+one of them, wait for an element of the new page with `WaitFor`; a click on a button whose handler calls them is
+waited for.
+
+Firefox keeps no page in its **back-forward cache** under Ceti, the copy of the last pages that makes a person's Back
+instant: a page that `history.back()` brings back loads again, as after a reload, where a person's Firefox may show it
+as it was left, its scripts not run again. Firefox 160 tells of a page taken from that cache only that its navigation
+started, so a click on Back would wait for a load that never comes.
+
+**A page can't hold a step for ever.** Each wait for a navigation ends at the step's `timeout`, with the address it
+waited for. Ceti reads the events of Firefox as any input: a field of the wrong type changes nothing. It follows the
+navigations of at most 1,000 browsing contexts at once, so that a page that makes frames without end can't fill the
+memory; past them, a new frame's navigation isn't waited for.
 
 ## Clicking and typing
 
@@ -585,7 +627,7 @@ Errors are values: each function gives an `Ok`, or an `Err` of `{Kind, Message}`
 
 | Kind | When |
 |---|---|
-| `"timeout"` | a wait found no element before its time was over, or Firefox gave no answer in time |
+| `"timeout"` | a wait found no element before its time was over, a page didn't load in time, or Firefox gave no answer in time |
 | `"browser"` | Firefox refused a command: the `Err` has the `Code` of BiDi, as `no such frame` or `unknown error`, and its `Message` |
 | `"script"` | `Eval` met an exception, or a value that JSON can't write |
 | `"closed"` | the browser has gone: it crashed, or `Firefox` has given its answer already |

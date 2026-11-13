@@ -135,6 +135,84 @@ defn isAcrossNavigation()
   end)
 end
 
+defn navSite(posts)
+  (** tests/pages, and the answers that nav.html leads to: /next answers a form after 0.2 s, then sends its body to
+      posts; /later answers a page after 0.2 s; /nothing has no content (204); /attach is a download; /slow answers
+      after 2 s. *)
+  l = net.Listen(0)?
+  page(here) = http.Html("<!doctype html><title>Next</title><p id=\"here\">$here</p><a id=\"again\" href=\"/nav.html\">Again</a><button id=\"back\" onclick=\"history.back()\">Back</button>")
+  posted = defn (r)
+    sys.Sleep(0.2)
+    fiber.Send(r.Body, posts)
+    page("posted $(r.Body)")
+  end
+  later = defn (r)
+    sys.Sleep(0.2)
+    page("the new page")
+  end
+  attach = {Status: 200, Body: "a,b\n", Headers: [{Name: "content-type", Value: "text/csv"}, {Name: "content-disposition", Value: "attachment; filename=a.csv"}]}
+  fiber.Spawn(() -> http.Serve(http.App() then http.Post("/next", posted) then http.Get("/later", later) then http.Get("/nothing", r -> {Status: 204, Body: ""}) then http.Get("/attach", r -> attach) then http.Get("/slow", r -> slowly()) then http.Static("/", "tests/pages"), listener = l))
+  result.Ok("http://127.0.0.1:$(net.Port(l))")
+end
+
+defn isNavigationWaited()
+  (** A click or a key that takes the page to another document, by a link, a form, a script of the page or the
+      history, answers once that document has loaded: the server has answered, and the next step reads the new page,
+      never the one that went away, nor waits in it for ever. A click in a frame that loads the page around it holds
+      the next step on that page. A click that loads nothing, or a navigation that brings no document, an answer 204,
+      a download or a stop, holds nothing; one that doesn't load in time is a timeout that names it. *)
+  posts = fiber.Channel(size = 16)
+  site = navSite(posts)?
+  here = "document.getElementById('here').textContent"
+  browser.Firefox(defn (b)
+    p = browser.NewPage(b)?
+    blank = browser.Eval("location.href", p)?
+    home() = browser.Go("$site/nav.html", p)
+    home()?
+    browser.Click("#post", p)?
+    heard = fiber.Receive(posts, timeout = 0)
+    posted = [browser.Eval("location.pathname", p)?, browser.Eval("new Promise((done) => setTimeout(() => done(document.title), 10))", p)?, browser.Text("#here", p)?]
+    home()?
+    browser.Click("#later", p)?
+    later = browser.Eval(here, p)?
+    home()?
+    browser.Click("#field", p)?
+    browser.Press("Enter", p)?
+    entered = [fiber.Receive(posts, timeout = 0).Value, browser.Eval("document.title", p)?]
+    home()?
+    _ = browser.Eval("document.getElementById('stop').onclick = () => document.forms[0].submit(), 1", p)?
+    browser.Click("#stop", p)?
+    submitted = browser.Eval(here, p)?
+    browser.Click(browser.ByRole("link", name = "Again"), p)?
+    again = browser.Eval("document.title", p)?
+    browser.Click("#later", p)?
+    browser.Click("#back", p)?
+    back = browser.Eval(here, p)?
+    browser.Click("#top", browser.Frame("#inner", p)?)?
+    top = browser.Eval(here, p)?
+    home()?
+    slow = [browser.Click("#slow", p, timeout = 0.3).Error.Message, browser.Eval("1", p, timeout = 0.3).Error.Message, browser.Text("#here", p, timeout = 0.3).Error.Message]
+    home()?
+    t = sys.Now()
+    for quick in ["#nothing", "#export", "#attach", "#idle", "#stop"]
+      browser.Click(quick, p)?
+    end
+    none = [browser.Eval(here, p)?, sys.Now() - t < 1]
+    list.All([
+      blank == "about:blank",
+      value.Equal(heard, result.Ok("n=x")),
+      value.Equal(posted, ["/next", "Next", "posted n=x"]),
+      later == "the new page",
+      value.Equal(entered, ["n=x", "Next"]),
+      submitted == "posted n=x",
+      again == "Nav",
+      back == "the first page",
+      top == "the new page",
+      value.Equal(none, ["the first page", true]),
+      value.Equal(slow, ["#slow: the page was still loading $site/slow after 0.3 s", "Eval: the page was still loading $site/slow after 0.3 s", "#here: the page was still loading $site/slow after 0.3 s"])])
+  end, kept)
+end
+
 defn isPromptsDismissed()
   on("alert.html", defn (p, site)
     browser.Click("#alert", p)?
