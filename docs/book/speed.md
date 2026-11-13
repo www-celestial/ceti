@@ -163,6 +163,44 @@ What the numbers say:
   each call: `Text` took 2.5 ms. A preload script that put it in every document cost 2.7 ms at each `Go` and 15 ms at
   each `NewPage` (11 rounds), so the first wait does it.
 
+### After a click that loads another page
+
+A click or a key that takes the page to another document answers once that document has loaded, as `Go` does (see
+the guide). Measured on 13 November 2026 with Firefox 160.0: 21 rounds in one hold of the lock, main's Ceti and this
+Ceti in turn, the order switched at each round, each round in a new Firefox, then the median of 21 warm calls of each
+step. The page holds 20 images that the server forbids to keep (`no-store`), so that each load fetches them again:
+
+| Step | main | this Ceti | difference |
+|---|---:|---:|---:|
+| `Go` of the page of 20 images | 36.4 [34.2–42.2] | 35.0 [32.8–39.3] | -1.3 [-7.3, +1.2] |
+| `Click` of a button that loads nothing | 5.5 [5.3–6.0] | 8.0 [7.8–9.1] | +2.5 [+2.2, +3.4] |
+| `Eval("1")` | 0.7 [0.6–1.1] | 0.6 [0.6–0.7] | -0.1 [-0.3, +0.0] |
+| `Text` | 1.1 [1.0–1.5] | 1.0 [0.9–1.1] | -0.1 [-0.4, +0.0] |
+| `Click` of a link, alone | 16.1 [15.5–17.6] | 32.9 [31.9–34.2] | +16.8 [+15.0, +18.0] |
+| `Click` of a link, then `Text` of the new page | 37.4 [34.2–39.9] | 45.7 [43.3–48.0] | +8.3 [+4.3, +12.3] |
+| the same, to a page of 20 images | 49.7 [48.0–52.5] | 59.8 [56.9–63.3] | +10.1 [+6.7, +13.2] |
+| the start of a program that loads Ceti | 5.69 [5.41–5.89] | 5.60 [5.51–5.76] | -0.09 [-0.27, +0.18] |
+
+What the numbers say:
+
+- **A click on a link now holds the load** that main's click left to the next step: 17 ms more for the click alone.
+  With a `Text` of the new page after it, the difference is 8 to 10 ms: main's `Text` found its element as soon as the
+  new document had it, where this Ceti waits for the `load` event, which comes later, after the images too, and pays
+  the 2.5 ms of the next point.
+- **A click or a key press costs about 2.5 ms more**, even when it loads nothing: Ceti asks Firefox for
+  `network.fetchError` just before it and stops just after, the one sign Firefox 160 gives of a navigation that ends in
+  an answer 204 or a stop, and Firefox takes that time to apply the two.
+- **A page loads as fast as on main.** The first version of this wait asked for `network.fetchError` once, for the
+  whole session. While any event of the network is asked for, Firefox follows every request of every page, about 1 ms
+  each: in one Firefox, 8 rounds of each, medians of 11 warm calls:
+
+| Step | no `fetchError` | around each click (this Ceti) | for the whole session |
+|---|---:|---:|---:|
+| `Go` of the page of 20 images | 43.2 | 41.7 | 65.6 |
+| `Click` of a button that loads nothing | 5.8 | 9.1 | 5.7 |
+| `Click` of a link, then `Text` of the new page | 43.1 | 47.7 | 55.7 |
+| the same, to a page of 20 images | 66.1 | 68.1 | 86.9 |
+
 ### The start of a program that loads Ceti
 
 A program that loads Ceti and prints a number starts in 10.9 ms [10.6–11.2] against 8.1 ms [8.0–8.4] with main's Ceti:
