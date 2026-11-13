@@ -332,6 +332,13 @@ the page refused to leave, `downloadWillBegin` for a download, and `network.fetc
 #signin: the page was still loading http://127.0.0.1:8080/invoices after 5 s
 ```
 
+Ceti asks Firefox for `network.fetchError` only around a click or a key press (`Click`, `Check`, `Uncheck`, `Press`),
+from just before it until its navigation has its document: while any event of the network is asked for, Firefox
+follows every request of the page, at about 1 ms each, measured, so a `Go` of a page of 20 images would take 19 ms
+more. So a navigation that a script of the page begins by itself, as an `Eval` that sets `location` or a timer, and that
+brings no document, an answer 204 or a stop, holds each step of that page until its `timeout`, until a `Go` takes the
+page elsewhere.
+
 Every step also waits first for a navigation under way in its page, whatever began it: a click in a frame whose link
 loads the whole page holds the next step on that page until the new document has loaded. A navigation that a script
 begins by itself later, as a timer that changes `location`, may begin while a step runs: `Text` and the other waits for

@@ -52,6 +52,28 @@ defn call(method, params, s, wait = answerTime)
   got.Value
 end
 
+defn ahead(method, params, s)
+  (** Sends a command with no wait for its answer: the channel of the answer, which answerOf reads. The dispatcher
+      writes the commands in the order they come, so a command sent ahead reaches Firefox before the next one. *)
+  reply = fiber.Channel(size = 1)
+  if isClosed(s.gone)
+    fiber.Send(lost(), reply)
+  else
+    fiber.Send({Method: method, Params: params, Reply: reply}, s.requests)
+  end
+  reply
+end
+
+(* The answer of a command sent ahead, as call gives it, or the Err of the wait when none came within wait seconds. *)
+answerOf(reply, wait = answerTime) = fiber.Receive(reply, timeout = wait)?
+
+defn tell(r, s)
+  (** Gives the dispatcher a request that has no answer, while it runs. *)
+  if not isClosed(s.gone)
+    fiber.Send(r, s.requests)
+  end
+end
+
 defn ask(r, s)
   (** Sends the dispatcher a request of its own, as a watch, and gives its answer, or an Err of the kind "closed". *)
   if isClosed(s.gone)
@@ -71,7 +93,7 @@ defn watch(methods, test, run, s, once = true, only = false)
   ask({Watch: {Methods: methods, Test: test, Run: run, Once: once, Only: only}}, s)
 end
 
-unwatch(id, s) = fiber.Send({Unwatch: id}, s.requests)   (* Ends a watch, if it hasn't ended. *)
+unwatch(id, s) = tell({Unwatch: id}, s)   (* Ends a watch, if it hasn't ended. *)
 
 defn hangUp(s)
   (** Stops the dispatcher, which closes the connection. *)
@@ -85,14 +107,17 @@ defn dispatch(c, requests, gone)
   (** The fiber that owns the connection, until it ends or a Stop comes. A request gets the next id and is written; an
       answer goes to the request of its id, as an Ok of its result or an Err; an event goes to the watches that take it.
       A prompt that no watch takes is dismissed, and the console's entries are kept for each user context. It follows
-      the navigation under way in each browsing context, and holds each Settle until that navigation has ended. At the
-      end, the requests that wait get an Err of the kind "closed", as do those that come after. *)
+      the navigation under way in each browsing context, holds each Settle until that navigation has ended, and ends
+      the subscription of each Disarm once the navigation of its context has its document or has ended, or at once when
+      none is under way. At the end, the requests that wait get an Err of the kind "closed", as do those that come
+      after. *)
   s = {requests: requests, gone: gone}
   waiting = dict.Dict()
   watches = dict.Dict()
   logs = dict.Dict()
   going = dict.Dict()
   held = dict.Dict()
+  armed = dict.Dict()
   next = 0
   while true
     got = fiber.Select([requests, c.Messages])
@@ -121,6 +146,19 @@ defn dispatch(c, requests, gone)
         else
           fiber.Send(result.Ok(missing), r.Reply)
         end
+      else if dict.Has("Disarm", r)
+        ctx = r.After
+        if dict.Has(ctx, going) and not going[ctx].Committed and value.Len(dict.GetOr(ctx, [], armed)) < maxArmed
+          armed[ctx] = list.Append(r.Disarm, dict.GetOr(ctx, [], armed))
+        else
+          fiber.Spawn(() -> call("session.unsubscribe", {subscriptions: [r.Disarm]}, s))
+        end
+      else if dict.Has("Ended", r)
+        if dict.Has(r.Ended, going) and (value.IsMissing(r.Navigation) or going[r.Ended].Navigation == r.Navigation)
+          going = dict.Drop(r.Ended, going)
+          held = released(r.Ended, held)
+          armed = disarmed(r.Ended, armed, s)
+        end
       else
         sent = websocket.Send(json.Text({id: next, method: r.Method, params: r.Params}), c)
         if result.IsOk(sent)
@@ -142,10 +180,10 @@ defn dispatch(c, requests, gone)
         moved = followed(going, method, e)
         going = moved.Going
         if not value.IsMissing(moved.Ended)
-          for reply in dict.GetOr(moved.Ended, [], held)
-            fiber.Send(result.Ok(missing), reply)
-          end
-          held = dict.Drop(moved.Ended, held)
+          held = released(moved.Ended, held)
+        end
+        if not value.IsMissing(moved.Landed)
+          armed = disarmed(moved.Landed, armed, s)
         end
         taken = false
         owned = false
@@ -192,35 +230,69 @@ defn dispatch(c, requests, gone)
   _ = websocket.Close(c)
 end
 
+(* The holds of the Settles of a context, released: each gets Ok(missing). *)
+defn released(ctx, held)
+  for reply in dict.GetOr(ctx, [], held)
+    fiber.Send(result.Ok(missing), reply)
+  end
+  dict.Drop(ctx, held)
+end
+
+(* The subscriptions of the Disarms of a context, ended, in fibers of their own: the dispatcher never waits. *)
+defn disarmed(ctx, armed, s)
+  for sub in dict.GetOr(ctx, [], armed)
+    fiber.Spawn(() -> call("session.unsubscribe", {subscriptions: [sub]}, s))
+  end
+  dict.Drop(ctx, armed)
+end
+
 (* The events that end a navigation: its document has loaded, or it has none to bring, as it failed, became a
    download, or its request ended with no document, for an answer 204 or a stop (Firefox 160 sends no
-   navigationAborted). *)
+   navigationAborted, and no event of browsingContext at all for those two: only network.fetchError, which an action
+   subscribes to for its own navigation, see act). *)
 navigationEnds = ["browsingContext.load", "browsingContext.navigationFailed", "browsingContext.downloadWillBegin", "network.fetchError"]
+
+(* The events of the navigations that the session asks for at its start: no event of the network, since a
+   subscription to any of them has Firefox follow every request of every page, at a cost of about 1 ms each, measured
+   (19 ms more for a Go of a page of 20 images). *)
+navigationEvents = ["browsingContext.navigationStarted", "browsingContext.navigationCommitted", "browsingContext.load", "browsingContext.navigationFailed", "browsingContext.downloadWillBegin"]
+
+(* How many subscriptions of Disarms a context may hold until its navigation has its document: past them, the next
+   one ends at once. A page runs one action at a time, so this is room, not a limit that a test meets. *)
+maxArmed = 64
 
 (* How many browsing contexts may have a navigation under way at once in the dispatcher's eyes: a page that makes
    frames without end can't fill the memory; past it, a new context's navigation isn't waited for. *)
 maxGoing = 1000
 
 defn followed(going, method, e)
-  (** The navigations under way, {context: {Navigation, Url}}, after an event: {Going, Ended}, Ended the context whose
-      navigation the event ended, or missing. A new navigation of a context takes the place of the one it had. The
-      event is read as any message of Firefox: a field of the wrong type leaves things as they were. *)
+  (** The navigations under way, {context: {Navigation, Url, Committed}}, after an event: {Going, Ended, Landed},
+      Ended the context whose navigation the event ended, Landed the one whose navigation the event committed or
+      ended, or missing. A new navigation of a context takes the place of the one it had. The event is read as any
+      message of Firefox: a field of the wrong type leaves things as they were. *)
+  same = {Going: going, Ended: missing, Landed: missing}
   ctx = dict.GetOr("context", missing, e)
   nav = dict.GetOr("navigation", missing, e)
   if not value.IsText(ctx) or not value.IsText(nav)
-    return {Going: going, Ended: missing}
+    return same
   end
   if method == "browsingContext.navigationStarted"
     if not dict.Has(ctx, going) and value.Len(going) >= maxGoing
-      return {Going: going, Ended: missing}
+      return same
     end
     url = dict.GetOr("url", "", e)
-    return {Going: dict.Put(ctx, {Navigation: nav, Url: if value.IsText(url) url else "" end}, going), Ended: missing}
+    return {Going: dict.Put(ctx, {Navigation: nav, Url: if value.IsText(url) url else "" end, Committed: false}, going), Ended: missing, Landed: missing}
   end
-  if method in navigationEnds and dict.Has(ctx, going) and going[ctx].Navigation == nav
-    return {Going: dict.Drop(ctx, going), Ended: ctx}
+  if not dict.Has(ctx, going) or going[ctx].Navigation != nav
+    return same
   end
-  {Going: going, Ended: missing}
+  if method == "browsingContext.navigationCommitted"
+    return {Going: dict.Put(ctx, dict.Put("Committed", true, going[ctx]), going), Ended: missing, Landed: ctx}
+  end
+  if method in navigationEnds
+    return {Going: dict.Drop(ctx, going), Ended: ctx, Landed: ctx}
+  end
+  same
 end
 
 (* The request of a network event, a dictionary, or {} for a message that holds none: the tests of the watches, which

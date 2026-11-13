@@ -63,7 +63,7 @@ defn ClosePage(p)
     return result.Ok(missing)
   end
   call("browser.removeUserContext", {userContext: p.userContext}, p.session)?
-  fiber.Send({Forget: p.userContext}, p.session.requests)
+  tell({Forget: p.userContext}, p.session)
   if not value.IsMissing(p.home)
     fiber.Send(p.home, p.session.home)
   end
@@ -82,6 +82,11 @@ defn Go(url, p, timeout = DefaultTimeout)
   (** Goes to a URL and waits for its load event, at most timeout seconds: Ok(missing), an Err of the kind "browser"
       when the page can't be loaded, or of the kind "timeout". *)
   went = call("browsingContext.navigate", {context: p.context, url: url, wait: "complete"}, p.session, wait = timeout)
+  if result.IsOk(went) or went.Error.Kind == "browser"
+    (* Over, with its document or none: a navigation to an answer 204 fails with NS_BINDING_ABORTED, and no event of
+       browsingContext tells of its end. *)
+    tell({Ended: p.context, Navigation: if result.IsOk(went) and value.IsDict(went.Value) dict.GetOr("navigation", missing, went.Value) else missing end}, p.session)
+  end
   late(went, "$url: not loaded after $timeout s")?
   result.Ok(missing)
 end
@@ -98,7 +103,7 @@ defn Click(selector, p, timeout = DefaultTimeout)
 end
 
 (* A click at the centre of an element in view, then the wait for the page it leads to, if it leads to one. *)
-press(node, p, what, timeout, until) = act([mouse([toward(node, 0), {type: "pointerDown", button: 0}, {type: "pointerUp", button: 0}])], p, what, timeout, until)
+press(node, p, what, timeout, until) = act([mouse([toward(node, 0), {type: "pointerDown", button: 0}, {type: "pointerUp", button: 0}])], p, what, timeout, until, arm = true)
 
 (* The mouse's move to the centre of an element in view, in duration milliseconds. *)
 toward(node, duration) = {type: "pointerMove", x: 0, y: 0, duration: duration, origin: {type: "element", element: {sharedId: node.sharedId}}}
@@ -127,7 +132,7 @@ defn Press(combo, p)
   keys = chord(combo)
   until = sys.Now() + DefaultTimeout
   landed(p, "Press", DefaultTimeout, until = until)?
-  act([{type: "key", id: "keyboard", actions: keys}], p, "Press", DefaultTimeout, until)
+  act([{type: "key", id: "keyboard", actions: keys}], p, "Press", DefaultTimeout, until, arm = true)
 end
 
 defn Text(selector, p, timeout = DefaultTimeout)
@@ -230,11 +235,24 @@ end
 (* A timeout of the answer, said as the wait it was. *)
 late(r, message) = if result.IsErr(r) and r.Error.Kind == "timeout" result.Err({Kind: "timeout", Message: message}) else r end
 
-defn act(sources, p, what, timeout, until)
+defn act(sources, p, what, timeout, until, arm = false)
   (** Performs input actions, then waits until until for the navigation that they started, if they did: Firefox tells
       of it, browsingContext.navigationStarted, before it answers the actions. Ok(missing), or an Err that begins with
-      what. *)
-  call("input.performActions", {context: p.context, actions: sources}, p.session)?
+      what. A navigation that brings no document, an answer 204 or a stop, sends no event of browsingContext, only
+      network.fetchError. So with arm, for a click or a key press, the actions that lead to such pages, a subscription
+      to it for the page's tab goes just before the actions, sent ahead: Firefox 160 applies it as it reads it, before
+      it reads the actions. The dispatcher ends it once the navigation has its document or has ended, or at once when
+      none began, since while it lasts Firefox follows every request of the tab, at about 1 ms each. *)
+  armed = if arm ahead("session.subscribe", {events: ["network.fetchError"], contexts: [p.context]}, p.session) else missing end
+  acted = call("input.performActions", {context: p.context, actions: sources}, p.session)
+  if arm
+    sub = answerOf(armed)
+    id = if result.IsOk(sub) and value.IsDict(sub.Value) dict.GetOr("subscription", missing, sub.Value) else missing end
+    if value.IsText(id)
+      tell({Disarm: id, After: p.context}, p.session)
+    end
+  end
+  acted?
   landed(p, what, timeout, until = until)
 end
 

@@ -176,19 +176,23 @@ defn isUntrustedMessages()
 end
 
 defn isNavigationsFollowed()
-  (** The dispatcher's view of the navigations under way: a start, the end of that navigation only, a later one in
-      its place; the messages of Firefox read as any input, wrong-typed fields changing nothing; and no more contexts
-      than maxGoing. *)
+  (** The dispatcher's view of the navigations under way: a start, its commit, the end of that navigation only, a
+      later one in its place; the messages of Firefox read as any input, wrong-typed fields changing nothing; and no
+      more contexts than maxGoing. No event of the network is asked for at the start. *)
   start(ctx, nav) = {context: ctx, navigation: nav, url: "http://x/$nav"}
   one = followed(dict.Dict(), "browsingContext.navigationStarted", start("c", "n1")).Going
   two = followed(one, "browsingContext.navigationStarted", start("c", "n2")).Going
   ends = [followed(two, m, {context: "c", navigation: "n2"}) for m in navigationEnds]
-  many = dict.Dict([{Key: "c$k", Value: {Navigation: "n", Url: ""}} for k in 1..maxGoing])
-  same(r, going) = value.IsMissing(r.Ended) and value.Equal(r.Going, going)
+  committed = followed(two, "browsingContext.navigationCommitted", {context: "c", navigation: "n2"})
+  many = dict.Dict([{Key: "c$k", Value: {Navigation: "n", Url: "", Committed: false}} for k in 1..maxGoing])
+  same(r, going) = value.IsMissing(r.Ended) and value.IsMissing(r.Landed) and value.Equal(r.Going, going)
   list.All([
-    value.Equal(one, dict.Put("c", {Navigation: "n1", Url: "http://x/n1"}, dict.Dict())),
-    value.Equal(two, dict.Put("c", {Navigation: "n2", Url: "http://x/n2"}, dict.Dict())),
-    list.All([r.Ended == "c" and value.Len(r.Going) == 0 for r in ends]),
+    value.Equal(one, dict.Put("c", {Navigation: "n1", Url: "http://x/n1", Committed: false}, dict.Dict())),
+    value.Equal(two, dict.Put("c", {Navigation: "n2", Url: "http://x/n2", Committed: false}, dict.Dict())),
+    list.All([r.Ended == "c" and r.Landed == "c" and value.Len(r.Going) == 0 for r in ends]),
+    value.IsMissing(committed.Ended) and committed.Landed == "c" and committed.Going["c"].Committed,
+    same(followed(two, "browsingContext.navigationCommitted", {context: "c", navigation: "n1"}), two),
+    list.All([not text.StartsWith("network.", m) for m in navigationEvents]),
     same(followed(two, "browsingContext.load", {context: "c", navigation: "n1"}), two),
     same(followed(two, "browsingContext.load", {context: "d", navigation: "n2"}), two),
     same(followed(two, "network.fetchError", {context: "c", navigation: missing}), two),

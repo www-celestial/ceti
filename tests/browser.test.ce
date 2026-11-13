@@ -160,7 +160,8 @@ defn isNavigationWaited()
       history, answers once that document has loaded: the server has answered, and the next step reads the new page,
       never the one that went away, nor waits in it for ever. A click in a frame that loads the page around it holds
       the next step on that page. A click that loads nothing, or a navigation that brings no document, an answer 204,
-      a download or a stop, holds nothing; one that doesn't load in time is a timeout that names it. *)
+      a download or a stop, holds nothing, nor does a Go to an answer 204, which fails; one that doesn't load in time
+      is a timeout that names it. *)
   posts = fiber.Channel(size = 16)
   site = navSite(posts)?
   here = "document.getElementById('here').textContent"
@@ -198,6 +199,9 @@ defn isNavigationWaited()
       browser.Click(quick, p)?
     end
     none = [browser.Eval(here, p)?, sys.Now() - t < 1]
+    went = browser.Go("$site/nothing", p)
+    t = sys.Now()
+    nothing = [went.Error.Kind, browser.Eval(here, p)?, sys.Now() - t < 1]
     list.All([
       blank == "about:blank",
       value.Equal(heard, result.Ok("n=x")),
@@ -209,6 +213,7 @@ defn isNavigationWaited()
       back == "the first page",
       top == "the new page",
       value.Equal(none, ["the first page", true]),
+      value.Equal(nothing, ["browser", "the first page", true]),
       value.Equal(slow, ["#slow: the page was still loading $site/slow after 0.3 s", "Eval: the page was still loading $site/slow after 0.3 s", "#here: the page was still loading $site/slow after 0.3 s"])])
   end, kept)
 end

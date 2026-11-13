@@ -264,7 +264,7 @@ defn connect(url, profile)
   s = open("$url/session")?
   caps = {alwaysMatch: {unhandledPromptBehavior: {default: "ignore"}}}
   started = call("session.new", {capabilities: caps}, s)
-  heard = if result.IsOk(started) call("session.subscribe", {events: list.Concat(["browsingContext.userPromptOpened", "log.entryAdded", "browsingContext.navigationStarted"], navigationEnds)}, s) else started end
+  heard = if result.IsOk(started) call("session.subscribe", {events: list.Concat(["browsingContext.userPromptOpened", "log.entryAdded"], navigationEvents)}, s) else started end
   denied = if result.IsOk(heard) call("browser.setDownloadBehavior", {downloadBehavior: {type: "denied"}}, s) else heard end
   tree = if result.IsOk(denied) call("browsingContext.getTree", {maxDepth: 0}, s) else denied end
   if result.IsErr(tree)
