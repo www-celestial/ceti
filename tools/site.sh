@@ -12,7 +12,7 @@ out=$(cd "$1" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cp -R docs "$work/"
-cp README.md "$work/"
+cp README.md README.fr.md "$work/"
 dep=$work/deps/www-celestial/ceti
 mkdir -p "$dep/src"
 cp cesia.toml "$dep/"
