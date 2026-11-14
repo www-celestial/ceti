@@ -1,0 +1,75 @@
+name: pages
+
+# The site of Ceti, its book and the reference of its package, as cesia doc --site makes them from this commit: built for
+# each pull request, and published on GitHub Pages from main. It runs on the nightly Cesia, as its release gives it: the
+# book uses the package as a program does, use deps/www-celestial/ceti/src/browser, which cesia doc --site reads from the
+# project itself since Cesia 1.2. A block of the book that doesn't check, a [Name] that leads nowhere, or a French page that
+# drifts from its English one stops the build, and the site in place stays as it was. Until Cesia has a nightly release,
+# there is nothing to build with, and the build says so.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Each day too: a new nightly Cesia rebuilds and republishes the site without a push to Ceti.
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    outputs:
+      built: ${{ steps.site.outputs.built }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Cesia nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive=cesia-linux-x86_64.tar.gz
+          if ! gh release download nightly --repo www-celestial/cesia-lang --pattern "$archive*" --dir download; then
+            echo "Cesia has no nightly release yet: nothing to build the site with."
+            echo "NO_CESIA=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          (cd download && [ "$(sha256sum "$archive" | cut -d' ' -f1)" = "$(cut -d' ' -f1 < "$archive.sha256")" ])
+          mkdir -p "$HOME/.cesia"
+          tar -xzf "download/$archive" -C "$HOME/.cesia"
+          echo "$HOME/.cesia/bin" >> "$GITHUB_PATH"
+      - name: Site
+        id: site
+        if: env.NO_CESIA != '1'
+        run: |
+          cesia version
+          cesia doc --site _site
+          echo "built=1" >> "$GITHUB_OUTPUT"
+      # What the build keeps for itself: what lets the next build skip a page that didn't change, and the tabs it checked.
+      - name: Only the pages
+        if: env.NO_CESIA != '1'
+        run: rm -rf _site/.pages _site/.reference _site/.book _site/.tabs
+      - uses: actions/upload-pages-artifact@v5
+        if: env.NO_CESIA != '1'
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.build.outputs.built == '1'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

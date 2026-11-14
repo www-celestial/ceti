@@ -8,7 +8,7 @@ cesia = "1.1"
 allow = ["exec=firefox", "net=127.0.0.1", "write=.cesia/firefox"]
 timeout = "30"
 
-# cesia doc --site, through tools/site.sh: the site of Ceti, its book and the reference of its package.
+# cesia doc --site: the site of Ceti, its book and the reference of its package.
 [site]
 title = "Ceti"
 source = "https://github.com/www-celestial/ceti/blob/main/"
