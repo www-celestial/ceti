@@ -1,6 +1,6 @@
 [project]
 name = "ceti"
-cesia = "1.1"
+cesia = "1.2"
 
 # The tests start Firefox, which listens on a port it chooses on 127.0.0.1, and serve their pages themselves. Firefox
 # keeps the template of its profiles in .cesia/firefox, from one run of the tests to the next.
