@@ -7,7 +7,7 @@ le font Playwright, Puppeteer et Selenium. Il parle
 **WebDriver BiDi**, le protocole du W3C pour l'automatisation des navigateurs : BiDi veut dire bidirectionnel, puisque le
 programme envoie des commandes et que le navigateur renvoie des réponses sur une seule connexion WebSocket (une connexion
 qui reste ouverte, où les messages vont dans les deux sens). Firefox sert BiDi lui-même, si bien que Ceti n'a besoin que
-de Firefox et de Cesia 1.1, et ni de Node, ni d'un programme pilote (driver), ni du téléchargement d'un navigateur.
+de Firefox et de Cesia 1.2, et ni de Node, ni d'un programme pilote (driver), ni du téléchargement d'un navigateur.
 
 ```cesia
 use deps/www-celestial/ceti/src/browser

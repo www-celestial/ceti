@@ -6,7 +6,7 @@ waits for the network, reads the console, and captures the screen or prints a PD
 Selenium do. It speaks
 **WebDriver BiDi**, the W3C protocol of browser automation: BiDi stands for bidirectional, as the program sends commands
 and the browser sends answers back on one WebSocket connection. Firefox serves BiDi itself, so Ceti needs nothing
-but Firefox and Cesia 1.1, and no Node, no driver program, no download of a browser.
+but Firefox and Cesia 1.2, and no Node, no driver program, no download of a browser.
 
 ```cesia
 use deps/www-celestial/ceti/src/browser
