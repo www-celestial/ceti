@@ -355,6 +355,16 @@ defn isPanicCloses()
   text.Contains("on purpose", message) and value.Len(others(kept)?) == 0
 end
 
+defn isDownloadsNotInRecentFiles()
+  (** Each profile keeps the downloads out of the desktop's list of recent files, ~/.local/share/recently-used.xbel,
+      which Firefox writes outside write=, and where it put the path and the name of each download before. The test
+      reads the preference, as the home of the user is no part of the test's rights. *)
+  browser.Firefox(defn (b)
+    prefs = sys.Read("$kept/$(others(kept)?[1])/user.js")?
+    text.Contains("user_pref(\"browser.download.manager.addToRecentDocs\", false);", prefs)
+  end, kept)
+end
+
 defn isTooLargeSaysWhy()
   (** A message of Firefox past the 64 MiB that Ceti reads, as the console line of 70 MiB that a page writes, ends the
       session, and every step after it says so, as Firefox ran on: it said "Firefox has closed." before. Firefox is

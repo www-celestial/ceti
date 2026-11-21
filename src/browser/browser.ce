@@ -164,9 +164,11 @@ end
    page that history.back() brings back loads again: Firefox 160 tells of a page taken from that cache only that its
    navigation started, and a step after it would wait for a load that never comes; and a local page, of a file: URL, is
    an origin of its own, as Firefox makes it when no program drives it: its scripts read no other file of the machine,
-   which the preferences of WebDriver BiDi would let them do. *)
+   which the preferences of WebDriver BiDi would let them do; and a download goes into no list of the desktop's recent
+   files, ~/.local/share/recently-used.xbel, a lasting record of what was automated. *)
 prefs = "user_pref(\"general.smoothScroll\", false);
 user_pref(\"security.fileuri.strict_origin_policy\", true);
+user_pref(\"browser.download.manager.addToRecentDocs\", false);
 user_pref(\"browser.sessionhistory.max_total_viewers\", 0);
 user_pref(\"geo.prompt.testing\", true);
 user_pref(\"geo.prompt.testing.allow\", true);

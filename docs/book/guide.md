@@ -108,6 +108,21 @@ in it that does, is refused with an `Err` of the kind `"browser"`, since a templ
 steer every Firefox started from it, as a proxy in its preferences: give `Firefox` a folder of your own, as
 `.cesia/firefox`, never one you share.
 
+**What Firefox keeps in the home.** The profile holds what a run does, and goes with it. Firefox also writes a few
+things in the home of the user, `$HOME`, outside `write=`, which Ceti can't send elsewhere:
+
+- the folders `~/Downloads`, which it makes empty at its start, `~/.config/mozilla/firefox`, with `Crash Reports` and
+  `Pending Pings`, and `~/.cache/mozilla`;
+- the caches of the libraries it uses: the fonts in `~/.cache/fontconfig`, the shaders in `~/.cache/mesa_shader_cache`;
+- for each file that `Download` saves, the address it came from, in the metadata that GIO keeps of files,
+  `~/.local/share/gvfs-metadata`, under the path that the file had in the profile: Firefox writes it on Linux whatever
+  its preferences say.
+
+No download goes into the desktop's list of recent files, `~/.local/share/recently-used.xbel`: Ceti sets
+`browser.download.manager.addToRecentDocs` to false in each profile. A program that must leave nothing in the home runs
+with `HOME` set to a folder of its own, as `HOME=/tmp/run cesia run main.ce`: Firefox gets the environment of the
+program that starts it.
+
 ## Pages
 
 `browser.NewPage` opens a page in a **user context** of its own: a set of cookies, storage and cache that no other user
