@@ -55,6 +55,8 @@ Firefox serves itself: no Node, no driver program, no download of a browser.
   rather than "Firefox has closed.", and Firefox is closed at once: it took 10 s more and printed a panic.
 - A Firefox slow to end no longer prints the panic "This process has ended.": Ceti stops reading its output before it
   takes its exit. The first start in a folder has 30 s to end rather than 5, so a loaded machine keeps its template.
+- The site's build fails when the download of the nightly Cesia fails; only a nightly that isn't there yet counts as
+  none. It passed green before, with nothing built or checked.
 
 ### Docs
 
