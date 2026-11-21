@@ -325,10 +325,10 @@ defn isFileUrlsKeepRead()
 end
 
 defn isProfilesPrivate()
-  (** The folder given to Firefox, its template, each profile and the folder where a download waits are their owner's
-      alone, 0700, and the files that Ceti copies or writes in a profile 0600, as Firefox makes its keys and its
-      certificates: no one else on the machine reads the cookies or the storage of a page while Firefox runs. They were
-      0755 and 0644, key4.db and cert9.db too. *)
+  (** The template, each profile and the folder where a download waits are their owner's alone, 0700, and the files
+      that Ceti copies or writes in a profile 0600, as Firefox makes its keys and its certificates: no one else on the
+      machine reads the cookies or the storage of a page while Firefox runs. They were 0755 and 0644, key4.db and
+      cert9.db too. The folder given to Firefox keeps the mode it had: see isExistingFolderKeepsItsMode. *)
   site = served()?
   alone = 448   (* 0700 *)
   own = 384   (* 0600 *)
@@ -344,10 +344,32 @@ defn isProfilesPrivate()
     end
     browser.Download(export, "$(test.Temp())/report.csv", p)?
     list.All([
-      value.Equal([mode(f) for f in [kept, "$kept/$templateName", profile, "$profile/storage"]], [alone, alone, alone, alone]),
+      value.Equal([mode(f) for f in ["$kept/$templateName", profile, "$profile/storage"]], [alone, alone, alone]),
       value.Equal([mode("$profile/$f") for f in ["user.js", "key4.db", "cert9.db", "cookies.sqlite"]], [own, own, own, own]),
       value.Equal(fiber.Receive(waiting, timeout = 0)?, [alone])])
   end, kept)
+end
+
+defn isExistingFolderKeepsItsMode()
+  (** A folder given to Firefox that is there already keeps its mode, as the person chose it: one of the person's own,
+      0755, works and stays 0755, its template 0700. One that others can write in, as /tmp with its sticky bit, is
+      refused before any Firefox starts, as someone else could put a template in it. *)
+  base = test.Temp()
+  open = "$base/open"
+  shared = "$base/shared"
+  sys.Mkdir(open)?
+  sys.Chmod(open, 493)?   (* 0755 *)
+  sys.Mkdir(shared)?
+  sys.Chmod(shared, 1023)?   (* 1777 *)
+  ran = browser.Firefox(b -> result.Ok("ran"), open)
+  made = [name for name in sys.List(open)? if text.StartsWith("template-", name)]
+  refused = browser.Firefox(b -> result.Ok("ran"), shared)
+  list.All([
+    value.Equal(ran, result.Ok("ran")),
+    sys.Stat(open)?.Mode == 493,
+    value.Equal(made, [templateName]) and sys.Stat("$open/$templateName")?.Mode == 448,
+    refused.Error.Kind == "browser" and text.Contains("can be written in by others", refused.Error.Message),
+    sys.Stat(shared)?.Mode == 1023 and value.Equal(sys.List(shared)?, [])])
 end
 
 defn isPanicCloses()

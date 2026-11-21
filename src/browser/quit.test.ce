@@ -20,9 +20,11 @@ end
 
 defn isSlowFirstStartKeepsItsTemplate()
   (** A first start whose Firefox takes 6 seconds more to end once closed, as on a loaded machine, keeps its template:
-      it had 5 seconds, then the TERM signal, which keeps none, so that the run gave an Err. *)
-  dir = test.Temp()
+      it had 5 seconds, then the TERM signal, which keeps none, so that the run gave an Err. The folder given to
+      Firefox, and the one above it, which weren't there, are made 0700. *)
+  above = "$(test.Temp())/new"
+  dir = "$above/firefox"
   out = Firefox(b -> result.Ok("ran"), dir, program = "tests/slow-firefox.sh")
   made = [name for name in sys.List(dir)? if text.StartsWith("template-", name)]
-  list.All([value.Equal(out, result.Ok("ran")), value.Len(made) == 1])
+  list.All([value.Equal(out, result.Ok("ran")), value.Len(made) == 1, sys.Stat(above)?.Mode == 448, sys.Stat(dir)?.Mode == 448])
 end

@@ -38,8 +38,9 @@ defn Firefox(f, dir, headless = true, program = "firefox")
       at a problem. program is the command of Firefox, as /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An
       Err of the kind "browser" when Firefox can't start, or doesn't end once closed. It needs exec= for program,
       net=127.0.0.1 for the port Firefox chooses, and read= and write= for dir, where the template and the profiles are
-      made and the profiles removed. dir becomes its owner's alone (0700), as the template and each profile are, since a
-      profile holds its pages' cookies and storage; a dir or a template that belongs to someone else is an Err of the
+      made and the profiles removed. A dir that isn't there is made its owner's alone (0700), as the template and each
+      profile are, since a profile holds its pages' cookies and storage; one that is there keeps its mode, and must be
+      the person's own, with no one else allowed to write in it: else, as for a template of someone else, an Err of the
       kind "browser". exec= of Firefox is total trust, as ffi= is: the program may start a Firefox of its own, with any
       arguments, which reads and writes every file of the user; Ceti's own functions read and write only what the
       permissions name. *)
@@ -119,14 +120,15 @@ defn newProfile(dir, program)
       template-Mozilla-Firefox-159.0-20261027034604-20261027034604, since Firefox refuses a profile of a later version
       than its own, and does its first-start work again on one of an earlier version. It is made in a folder of its
       own, then renamed at once, so that a copy never meets one half made: when another Firefox made it meanwhile, its
-      own goes. The templates of other versions then go. The copy gets the preferences of prefs. dir, the template and
-      the copy are their owner's alone, folders 0700 and files 0600; a dir or a template of someone else is refused. *)
+      own goes. The templates of other versions then go. The copy gets the preferences of prefs. The template and the
+      copy are their owner's alone, folders 0700 and files 0600, as dir when it wasn't there; owned says which dir is
+      refused, and a template of someone else is. *)
   ran = sys.Run(program, args = ["--full-version"])
   if result.IsErr(ran) or ran.Value.Code != 0
     return result.Err({Kind: "browser", Message: "$program --full-version gave no version."})
   end
   model = "$dir/template-$(text.Replace(" ", "-", text.Trim(ran.Value.Out)))"
-  mine(dir)?
+  owned(dir)?
   if sys.Exists(model)
     (* A template that someone else put there, when dir was open to others, is refused: its preferences would steer
        every Firefox of dir, as through a proxy. *)
@@ -177,6 +179,30 @@ user_pref(\"geo.provider.use_geoclue\", false);
 user_pref(\"geo.provider.use_corelocation\", false);
 user_pref(\"geo.provider.use_gpsd\", false);
 "
+
+defn owned(dir)
+  (** The folder given to Firefox, once it is safe to keep templates and profiles in it: made its owner's alone, 0700,
+      with the folders above it that it makes, when it isn't there; kept as it is when it is, as long as it is a folder
+      of the person's own that no one else can write in, since its mode is the person's choice. Ok(missing), or an Err
+      of the kind "browser": someone else could put a template in it, which would steer every Firefox started from it,
+      or swap a profile. Stat gives no owner, so a change of the mode to the one it has, which only the owner may make
+      and which changes nothing, tells it. *)
+  if not sys.Exists(dir)
+    return mine(dir)
+  end
+  s = sys.Stat(dir)
+  refused(why) = result.Err({Kind: "browser", Message: "Firefox: $dir $why, so someone else could put a template there, which would steer every Firefox started from it. Give Firefox a folder of your own that only you can write in, as .cesia/firefox."})
+  if result.IsErr(s) or not s.Value.IsDir
+    return refused("is no folder that Ceti can use")
+  end
+  if math.Mod(math.Div(s.Value.Mode, 2), 2) == 1 or math.Mod(math.Div(s.Value.Mode, 16), 2) == 1
+    return refused("can be written in by others, its group or everyone, as /tmp")
+  end
+  if result.IsErr(sys.Chmod(dir, s.Value.Mode))
+    return refused("belongs to someone else")
+  end
+  result.Ok(missing)
+end
 
 defn mine(folder)
   (** Makes a folder its owner's alone, 0700, as sys.Mkdir does with private = true, and the folders above it that it

@@ -101,12 +101,13 @@ file (see Pages), `Upload` for `read=` of each file it gives (see Forms), and `D
 that follows links; it doesn't hold back a program that means harm.
 
 **Private folders.** A profile holds the cookies and the storage of its pages while Firefox runs, so Ceti makes the
-folder given to `Firefox`, its template, each profile and the folder where a download waits yours alone, with Cesia's
-`private = true`: folders 0700, which no one else on the machine can list or enter, and the files it copies or writes
-0600. A folder given to `Firefox` that was open to others becomes 0700. One that belongs to someone else, or a template
-in it that does, is refused with an `Err` of the kind `"browser"`, since a template that someone else put there would
-steer every Firefox started from it, as a proxy in its preferences: give `Firefox` a folder of your own, as
-`.cesia/firefox`, never one you share.
+template, each profile and the folder where a download waits yours alone, with Cesia's `private = true`: folders 0700,
+which no one else on the machine can list or enter, and the files it copies or writes 0600. The folder given to
+`Firefox` is made 0700 too when it isn't there. One that is there keeps its mode, as you chose it, but it must be
+yours, and no one else may write in it: else, or when a template in it belongs to someone else, `Firefox` gives an
+`Err` of the kind `"browser"`, since a template that someone else put there would steer every Firefox started from it,
+as a proxy in its preferences. So a folder shared with others is refused, `/tmp` itself too, sticky bit and all: give
+`Firefox` a folder of your own, as `.cesia/firefox`.
 
 **What Firefox keeps in the home.** The profile holds what a run does, and goes with it. Firefox also writes a few
 things in the home of the user, `$HOME`, outside `write=`, which Ceti can't send elsewhere:
