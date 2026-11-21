@@ -36,7 +36,9 @@ defn Firefox(f, dir, headless = true, program = "firefox")
       4.2 s. headless = false shows the window, to look at a problem. program is the command of Firefox, as
       /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An Err of the kind "browser" when Firefox can't start,
       or doesn't end once closed. It needs exec= for program, net=127.0.0.1 for the port Firefox chooses, and read= and
-      write= for dir, where the template and the profiles are made and the profiles removed. *)
+      write= for dir, where the template and the profiles are made and the profiles removed. exec= of Firefox is total
+      trust, as ffi= is: the program may start a Firefox of its own, with any arguments, which reads and writes every
+      file of the user; Ceti's own functions read and write only what the permissions name. *)
   rethrow(result.Unwrap(fiber.Wait(fiber.Spawn(() -> whole(f, dir, headless, program)))))
 end
 
@@ -122,8 +124,11 @@ end
    Emulate gave, with no question that no one would answer, or else an error at once: never the machine's own place,
    which Firefox would ask of a network service or of GeoClue; and no page is kept in the back-forward cache, so that a
    page that history.back() brings back loads again: Firefox 160 tells of a page taken from that cache only that its
-   navigation started, and a step after it would wait for a load that never comes. *)
+   navigation started, and a step after it would wait for a load that never comes; and a local page, of a file: URL, is
+   an origin of its own, as Firefox makes it when no program drives it: its scripts read no other file of the machine,
+   which the preferences of WebDriver BiDi would let them do. *)
 prefs = "user_pref(\"general.smoothScroll\", false);
+user_pref(\"security.fileuri.strict_origin_policy\", true);
 user_pref(\"browser.sessionhistory.max_total_viewers\", 0);
 user_pref(\"geo.prompt.testing\", true);
 user_pref(\"geo.prompt.testing.allow\", true);
@@ -259,8 +264,8 @@ defn connect(url, profile)
       start. It asks for the events of the prompts, of the console and of the navigations: the dispatcher dismisses
       each prompt that no Dialog waits for, as no person is there to answer it, keeps the console, and follows the
       navigation under way in each browsing context, for the steps that wait for its document. Downloads are refused:
-      without it, Firefox would save a page's download in the user's download folder, where the program never allowed
-      a write. *)
+      without it, Firefox would save a page's download in the user's download folder, where the program has no
+      write=. *)
   s = open("$url/session")?
   caps = {alwaysMatch: {unhandledPromptBehavior: {default: "ignore"}}}
   started = call("session.new", {capabilities: caps}, s)

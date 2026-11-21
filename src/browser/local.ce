@@ -1,0 +1,105 @@
+(* The file of this machine that a URL reads, which Go checks against the rights of the program: Firefox reads it
+   itself, outside the sandbox of Cesia. *)
+use std/encode
+use std/list
+use std/result
+use std/sys
+use std/text
+use std/value
+
+defn mayRead(url)
+  (** Ok(missing) when url reads no file of this machine, or one that the program may read; the program stops with
+      Cesia's message when it may not, as sys.Stat does. An Err of the kind "browser" for a file: URL that Ceti can't
+      read as Firefox does. *)
+  file = localFile(url)?
+  if not value.IsMissing(file)
+    (* Cesia checks read= for the path as written and where its links lead. A file that isn't there gives an Err,
+       which Firefox gives too, as it always did. *)
+    _ = sys.Stat(file)
+  end
+  result.Ok(missing)
+end
+
+defn localFile(url)
+  (** The path of the file of this machine that a URL reads: the path of a file: URL, or of one inside view-source: or
+      jar:, its %XX decoded and its . and .. parts taken away, as Firefox reads it; missing for a URL that reads no
+      file, as http:, data: or about:. The URL is read as Firefox reads it: tabs and line ends dropped wherever they
+      are, controls and spaces at its ends, its scheme in any case, its host left out, as Firefox 160 leaves it out
+      on Linux. An Err of the kind "browser" for a file: URL whose host isn't localhost, whose path doesn't start with
+      /, or holds a \ or a %XX of ., /, \ or the zero byte, which Firefox reads as a part of the path or as a
+      separator, and for a jar: URL with more than one !: Ceti takes the plain form only. A %XX of bytes that are no
+      UTF-8 text stays those bytes, as in the name of the file that Firefox reads.
+
+        localFile(" FILE://localhost/tmp/a%20b/../c.html?x#y") --> result.Ok("/tmp/c.html")
+        localFile("view-source:file:///etc/hosts") --> result.Ok("/etc/hosts")
+        localFile("https://example.com/") --> result.Ok(missing) *)
+  u = bare(url)
+  low = text.Lower(u)
+  if text.StartsWith("view-source:", low)
+    return localFile(after(12, u))
+  end
+  if text.StartsWith("jar:", low)
+    (* The archive is the URL before its !: one ! only, so that Ceti and Firefox can't take two archives. *)
+    parts = text.Split("!", after(4, u))
+    if value.Len(parts) > 2
+      return refused(url, "holds more than one !")
+    end
+    return localFile(parts[1])
+  end
+  if not text.StartsWith("file:", low)
+    return result.Ok(missing)
+  end
+  rest = after(5, u)
+  if text.StartsWith("//", rest)
+    slash = text.ByteFind("/", 3, rest)
+    host = text.Lower(if value.IsMissing(slash) after(2, rest) else text.ByteSlice(3, slash - 1, rest) end)
+    if host != "" and host != "localhost"
+      return refused(url, "names the host $host")
+    end
+    rest = if value.IsMissing(slash) "/" else after(slash - 1, rest) end
+  end
+  if not text.StartsWith("/", rest)
+    return refused(url, "has no path that starts with /")
+  end
+  for mark in ["?", "#"]
+    cut = text.ByteFind(mark, 1, rest)
+    rest = if value.IsMissing(cut) rest else text.ByteSlice(1, cut - 1, rest) end
+  end
+  low = text.Lower(rest)
+  if text.Contains("\\", rest) or list.Any([text.Contains(e, low) for e in ["%2e", "%2f", "%5c", "%00"]])
+    return refused(url, "writes a dot, a slash, a backslash or the zero byte in %XX, or a backslash")
+  end
+  result.Ok(dotless(encode.UrlDecode(text.Replace("+", "%2B", rest))))
+end
+
+refused(url, why) = result.Err({Kind: "browser", Message: "Go: $url $why; Ceti takes a file: URL in its plain form, as file:///home/ana/page.html."})
+
+after(n, s) = text.ByteSlice(n + 1, text.ByteLength(s), s)   (* The bytes of s after its first n. *)
+
+defn bare(url)
+  (** A URL as a parser of URLs reads it: without its tabs and line ends, and without the controls and spaces at its
+      ends, the bytes from 0 to 32 (WHATWG URL, basic URL parser). *)
+  u = text.Replace("\t", "", text.Replace("\n", "", text.Replace("\r", "", url)))
+  first = 1
+  last = text.ByteLength(u)
+  while first <= last and text.Byte(first, u) <= 32
+    first += 1
+  end
+  while last >= first and text.Byte(last, u) <= 32
+    last -= 1
+  end
+  text.ByteSlice(first, last, u)
+end
+
+defn dotless(p)
+  (** An absolute path without its . and .. parts, as a URL's path is read: a .. at the top stays at the top. *)
+  parts = []
+  for part in text.Split("/", p)
+    if part == ".."
+      parts = if value.Len(parts) > 0 list.Take(value.Len(parts) - 1, parts) else parts end
+    else if part != "." and part != ""
+      parts = list.Append(part, parts)
+    end
+  end
+  "/$(text.Join("/", parts))"
+end

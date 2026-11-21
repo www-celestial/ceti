@@ -40,9 +40,10 @@ defn Upload(selector, files, p, timeout = DefaultTimeout)
   (** Gives a file field its files, as a person picks them in the dialog of the browser: a path, or a list of paths, and
       [] empties it. It waits for an input of type file, shown or not, as a page often hides it behind a button of its
       own; Firefox then sends the events input and change. Firefox reads the files itself, outside the sandbox of Cesia,
-      so each one must be a file that the program may read: read= for it, which Cesia checks with the links followed,
-      else its Err. Firefox takes absolute paths, so a relative one is taken from the current folder, which Ceti knows
-      when the folder given to Firefox is relative, as .cesia/firefox. Ok(missing), or an Err. *)
+      so each one must be a file that the program may read: read= for it, which Cesia checks with the links followed;
+      without it, the program stops with Cesia's message, as for any read. Firefox takes absolute paths, so a relative
+      one is taken from the current folder, which Ceti knows when the folder given to Firefox is relative, as
+      .cesia/firefox. Ok(missing), or an Err, as for a file that isn't there or isn't a regular file. *)
   full = []
   for f in if value.IsText(files) [files] else files end
     if not sys.Stat(f)?.IsFile

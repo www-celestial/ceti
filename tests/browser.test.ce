@@ -9,6 +9,7 @@ use std/fiber
 use std/http
 use std/list
 use std/net
+use std/path
 use std/result
 use std/sys
 use std/test
@@ -50,6 +51,7 @@ end
 
 panicOf(f) = fiber.Wait(fiber.Spawn(f)).Error.Message   (* The message of the panic of f(), or missing. *)
 kindOf(r) = r.Error.Kind
+says(part, m) = value.IsText(m) and text.Contains(part, m)   (* Does a message, if there is one, hold the part? *)
 
 defn isSignIn()
   on("form.html", defn (p, site)
@@ -290,6 +292,36 @@ defn isErrors()
     run.Refused.Error.Code == "unknown error",
     browser.Text("h1", run.Page).Error.Kind == "closed",
     browser.NewPage(run.Browser).Error.Kind == "closed"])
+end
+
+defn isFileUrlsKeepRead()
+  (** Go keeps the rights of the program: a file: URL of a file that the program may not read, in each way Firefox
+      reads one, its scheme in capitals, a space before it, a tab in it, the host localhost, one slash, a .., or inside
+      view-source: or jar:, stops the program with Cesia's message, as sys.Read would; one that Ceti can't read as
+      Firefox does, another host or %XX of a dot or a slash, is an Err; a file the program may read opens, in any of
+      those ways. Firefox reads every one of them, so a Go that only passed the URL on read the file. The local page
+      that opened is an origin of its own: a script of it can't fetch another file, which WebDriver BiDi lets it do. *)
+  page = path.Abs("tests/pages/form.html")
+  secret = "/etc/passwd"
+  denied = ["file://$secret", "FILE://$secret", " file://$secret", "fi\tle://$secret", "file://localhost$secret", "file:$secret", "file:///tmp/..$secret", "view-source:file://$secret", "jar:file://$secret!/x"]
+  odd = ["file://127.0.0.1$secret", "file:///tmp/%2e%2e$secret", "file:///tmp/..%2F$(text.Slice(2, value.Len(secret), secret))", "file:///tmp\\..$secret"]
+  browser.Firefox(defn (b)
+    p = browser.NewPage(b)?
+    opened = []
+    for u in ["file://$page", "FILE://localhost$page", " file:$page"]
+      browser.Go(u, p)?
+      opened = list.Append(browser.Text("h1", p)?, opened)
+    end
+    stopped = [says("denied for $secret", panicOf(() -> browser.Go(u, p))) for u in denied]
+    refused = [browser.Go(u, p).Error.Kind for u in odd]
+    fetched = browser.Eval("fetch('file://$secret').then(() => 'read', () => 'refused')", p)?
+    list.All([
+      value.Equal(opened, ["Form", "Form", "Form"]),
+      list.All(stopped),
+      value.Equal(refused, ["browser", "browser", "browser", "browser"]),
+      fetched == "refused",
+      browser.Eval("location.href", p)? == "file://$page"])
+  end, kept)
 end
 
 defn isPanicCloses()

@@ -80,7 +80,14 @@ end
 
 defn Go(url, p, timeout = DefaultTimeout)
   (** Goes to a URL and waits for its load event, at most timeout seconds: Ok(missing), an Err of the kind "browser"
-      when the page can't be loaded, or of the kind "timeout". *)
+      when the page can't be loaded, or of the kind "timeout". Firefox reads the files of this machine itself, outside
+      the sandbox of Cesia, so a URL that reads one, file:, or view-source: or jar: of one, needs read= for that file,
+      as sys.Read does: without it, the program stops with Cesia's message. A file: URL that isn't in its plain form,
+      file:///home/ana/page.html, as one that names another host or writes a slash in %XX, gives an Err of the kind
+      "browser". A local page is an origin of its own, so its scripts read no other file, and a page of http: leads to
+      no file. Ceti checks the URL it is given, not where a local page leads: a frame of it, or a link that the program
+      clicks or a script that it runs there, can still show another file of the machine. *)
+  mayRead(url)?
   went = call("browsingContext.navigate", {context: p.context, url: url, wait: "complete"}, p.session, wait = timeout)
   if result.IsOk(went) or went.Error.Kind == "browser"
     (* Over, with its document or none: a navigation to an answer 204 fails with NS_BINDING_ABORTED, and no event of

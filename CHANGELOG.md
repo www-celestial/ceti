@@ -42,6 +42,9 @@ Firefox serves itself: no Node, no driver program, no download of a browser.
 - Ceti dials no address but 127.0.0.1; Firefox writes a download in the profile only, never in the person's download
   folder, and a download path out of its folder is refused before any move; `Eval` asks Firefox for at most 64 levels; a
   message of the wrong shape gives an `Err` or nothing, never a panic of the dispatcher.
+- `Go` keeps the program's rights: a `file:` URL, or a `view-source:` or `jar:` one of a file, needs `read=` for that
+  file, and a `file:` URL in a form Firefox could read as another file is an `Err`; a local page's scripts read no other
+  file, as in a Firefox no program drives. The guide says that `exec=firefox` is total trust, as `ffi=` is.
 
 ### Docs
 

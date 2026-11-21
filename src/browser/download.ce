@@ -13,7 +13,7 @@ defn Download(action, to, p, timeout = DefaultTimeout)
       another disk, it copies it, up to 256 MiB.
       Downloads that no Download waits for are refused, as Firefox would else write them in the user's download folder.
       An Err of the kind "timeout" when no download ended within timeout seconds after the action, of the kind
-      "browser" when it failed, Cesia's Err when to isn't allowed, or the action's Err. *)
+      "browser" when it failed, or the action's Err; without write= for to, the program stops with Cesia's message. *)
   s = p.session
   uc = p.userContext
   rel = "$(s.profile)/downloads-$(math.Div(sys.Now() * 1000000, 1))"
