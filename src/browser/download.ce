@@ -17,7 +17,7 @@ defn Download(action, to, p, timeout = DefaultTimeout)
   s = p.session
   uc = p.userContext
   rel = "$(s.profile)/downloads-$(math.Div(sys.Now() * 1000000, 1))"
-  sys.Mkdir(rel)?
+  sys.Mkdir(rel, private = true)?
   folder = absolute(rel, s)?
   call("browser.setDownloadBehavior", {downloadBehavior: {type: "allowed", destinationFolder: folder}, userContexts: [uc]}, s)?
   sub = call("session.subscribe", {events: ["browsingContext.downloadEnd"], userContexts: [uc]}, s)

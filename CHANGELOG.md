@@ -45,6 +45,9 @@ Firefox serves itself: no Node, no driver program, no download of a browser.
 - `Go` keeps the program's rights: a `file:` URL, or a `view-source:` or `jar:` one of a file, needs `read=` for that
   file, and a `file:` URL in a form Firefox could read as another file is an `Err`; a local page's scripts read no other
   file, as in a Firefox no program drives. The guide says that `exec=firefox` is total trust, as `ffi=` is.
+- The folder given to `Firefox`, its template, each profile and each download folder are their owner's alone (0700, the
+  files Ceti copies 0600, `key4.db` and `cert9.db` included), and a folder or a template of someone else is refused;
+  they were 0755 and 0644. The guide says when a stop signal leaves a profile behind.
 
 ### Docs
 

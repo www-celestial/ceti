@@ -324,6 +324,32 @@ defn isFileUrlsKeepRead()
   end, kept)
 end
 
+defn isProfilesPrivate()
+  (** The folder given to Firefox, its template, each profile and the folder where a download waits are their owner's
+      alone, 0700, and the files that Ceti copies or writes in a profile 0600, as Firefox makes its keys and its
+      certificates: no one else on the machine reads the cookies or the storage of a page while Firefox runs. They were
+      0755 and 0644, key4.db and cert9.db too. *)
+  site = served()?
+  alone = 448   (* 0700 *)
+  own = 384   (* 0600 *)
+  mode(f) = sys.Stat(f).Value.Mode
+  waiting = fiber.Channel(size = 1)
+  browser.Firefox(defn (b)
+    profile = "$kept/$(others(kept)?[1])"
+    p = browser.NewPage(b)?
+    browser.Go("$site/events.html", p)?
+    export = defn ()
+      fiber.Send([mode("$profile/$name") for name in sys.List(profile)? if text.StartsWith("downloads-", name)], waiting)
+      browser.Click(browser.ByRole("link", name = "Export"), p)
+    end
+    browser.Download(export, "$(test.Temp())/report.csv", p)?
+    list.All([
+      value.Equal([mode(f) for f in [kept, "$kept/$templateName", profile, "$profile/storage"]], [alone, alone, alone, alone]),
+      value.Equal([mode("$profile/$f") for f in ["user.js", "key4.db", "cert9.db", "cookies.sqlite"]], [own, own, own, own]),
+      value.Equal(fiber.Receive(waiting, timeout = 0)?, [alone])])
+  end, kept)
+end
+
 defn isPanicCloses()
   message = panicOf(() -> browser.Firefox(b -> bug.Panic("on purpose"), kept))
   text.Contains("on purpose", message) and value.Len(others(kept)?) == 0

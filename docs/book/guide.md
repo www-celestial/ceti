@@ -71,8 +71,8 @@ it, and the other removes its own. A copy never meets a template half made.
 
 The folder can be removed whenever no Firefox runs from it: the next start makes the template again. Beside the
 template, a `profile-` folder is the profile of a Firefox that runs, and a `build-` folder a template being made; one
-that stays after Firefox has ended comes from a Firefox that was killed with `kill -9`, or from a power cut, and can be
-removed.
+that stays after Firefox has ended comes from a program that a stop signal ended ([No Firefox left
+behind](#no-firefox-left-behind)), from a `kill -9`, or from a power cut, and can be removed.
 
 ### Permissions
 
@@ -100,9 +100,13 @@ file ([Pages](#pages)), `Upload` for `read=` of each file it gives ([Forms](#for
 path of `write=` ([Downloads](#downloads)). That guards a program that passes on a URL or a path it didn't write
 itself, as a crawler that follows links; it doesn't hold back a program that means harm.
 
-**Private folders.** Cesia makes folders that others on the machine can read (0755) and files they can read (0644),
-and a profile holds the cookies and the storage of its pages while Firefox runs. Keep the folder given to `Firefox`
-under a home that is yours alone, as most systems make it (0700).
+**Private folders.** A profile holds the cookies and the storage of its pages while Firefox runs, so Ceti makes the
+folder given to `Firefox`, its template, each profile and the folder where a download waits yours alone, with Cesia's
+`private = true`: folders 0700, which no one else on the machine can list or enter, and the files it copies or writes
+0600. A folder given to `Firefox` that was open to others becomes 0700. One that belongs to someone else, or a template
+in it that does, is refused with an `Err` of the kind `"browser"`, since a template that someone else put there would
+steer every Firefox started from it, as a proxy in its preferences: give `Firefox` a folder of your own, as
+`.cesia/firefox`, never one you share.
 
 ## Pages
 
@@ -743,8 +747,18 @@ If Firefox still runs 5 seconds after it was closed, it gets the TERM signal, an
 an `Err` of the kind `"browser"`.
 
 A test that runs past its time is stopped by `cesia test`, which ends at the end of each test the programs it started:
-the TERM signal, and KILL a second later. Ctrl-C and TERM reach Firefox too. A `kill -9` of the Cesia program itself
-leaves Firefox running: nothing can run after it.
+the TERM signal, and KILL a second later. A `kill -9` of the Cesia program itself leaves Firefox running: nothing can
+run after it.
+
+A stop signal reaches Firefox too: Cesia passes TERM on to the programs it started, and a terminal sends Ctrl-C (INT) to
+all of them. Firefox ends; what becomes of its profile depends on the program:
+
+- **A program that doesn't take the stop signals**, as most scripts, ends at once, as Cesia ends it at the first one.
+  The profile stays in the folder, as nothing of the program runs after the signal to remove it. It is yours alone
+  ([Private folders](#permissions)), and can be removed.
+- **A program that takes them**, by `sys.Stops` as a server does, goes on: the function gets an `Err` of the kind
+  `"closed"` at its next step, as Firefox has ended, and `Firefox` removes the profile before it gives back what the
+  function gave. A second signal ends any program at once, and its profile stays.
 
 ## Not yet
 
