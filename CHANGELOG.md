@@ -51,6 +51,8 @@ Firefox serves itself: no Node, no driver program, no download of a browser.
 - A caller that `fiber.Cancel` stops leaves no Firefox and no profile behind while the program runs: the function is
   cancelled, then Firefox closed and the profile removed, about 3 s after the cancel; they ran on before, for good if
   the program ended meanwhile.
+- A message of Firefox past 64 MiB, as a page's console line that large, ends the session with an `Err` that says so,
+  rather than "Firefox has closed.", and Firefox is closed at once: it took 10 s more and printed a panic.
 
 ### Docs
 

@@ -223,12 +223,12 @@ defn landed(p, what, timeout, until = missing)
       that begins with what and names the page still loading after timeout seconds, or of the kind "closed". So a step
       never runs in a document that is going away. *)
   if isClosed(p.session.gone)
-    return lost()
+    return whyEnded(p.session)
   end
   reply = fiber.Channel(size = 2)
   fiber.Send({Settle: p.context, Reply: reply}, p.session.requests)
   first = fiber.Receive(reply, timeout = answerTime)
-  url = if result.IsOk(first) first.Value? else lost()? end
+  url = if result.IsOk(first) first.Value? else whyEnded(p.session)? end
   if value.IsMissing(url)
     return result.Ok(missing)
   end

@@ -663,7 +663,10 @@ defaults of BiDi. Firefox takes about 2.6 s to print a page, the first time and 
 
 Firefox sends the image in Base64, a way to write bytes as letters; Cesia decodes it in OCaml, about 0.1 ms for a
 screenshot of 19 KB. A message of Firefox holds at most 64 MiB, the `DefaultMaxMessage` of `std/websocket`, so a
-screenshot or a PDF holds at most 48 MiB: past it, the connection closes, and the browser is `"closed"`.
+screenshot or a PDF holds at most 48 MiB. Past it, the connection ends, as a WebSocket can't skip a message, and so does
+the session: each step after it gives an `Err` of the kind `"closed"` that says a message passed 64 MiB, and Firefox is
+closed with the TERM signal. A page can do it too, with a line of that size in its console, which Firefox sends whole
+(`Console` keeps 16 KiB of each). Ceti reads no larger message, so that no page can make the program hold more.
 
 ## Errors
 
@@ -674,7 +677,7 @@ Errors are values: each function gives an `Ok`, or an `Err` of `{Kind, Message}`
 | `"timeout"` | a wait found no element before its time was over, a page didn't load in time, or Firefox gave no answer in time |
 | `"browser"` | Firefox refused a command: the `Err` has the `Code` of BiDi, as `no such frame` or `unknown error`, and its `Message` |
 | `"script"` | `Eval` met an exception, or a value that JSON can't write |
-| `"closed"` | the browser has gone: it crashed, or `Firefox` has given its answer already |
+| `"closed"` | the browser has gone: it crashed, `Firefox` has given its answer already, or a message of Firefox passed 64 MiB, which ended the session; the `Message` says which |
 
 A command that doesn't wait on the page, as `Screenshot`, has 30 seconds: past them, Firefox is taken for stuck, and the
 command gives an `Err` of the kind `"timeout"`.

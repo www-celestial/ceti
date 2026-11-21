@@ -355,6 +355,24 @@ defn isPanicCloses()
   text.Contains("on purpose", message) and value.Len(others(kept)?) == 0
 end
 
+defn isTooLargeSaysWhy()
+  (** A message of Firefox past the 64 MiB that Ceti reads, as the console line of 70 MiB that a page writes, ends the
+      session, and every step after it says so, as Firefox ran on: it said "Firefox has closed." before. Firefox is
+      still closed, and its profile removed. *)
+  says64(r) = result.IsErr(r) and r.Error.Kind == "closed" and text.Contains("more than 64 MiB", r.Error.Message)
+  on("form.html", defn (p, site)
+    _ = browser.Eval("setTimeout(() => console.log('x'.repeat(70 * 1024 * 1024)), 0); 1", p)
+    n = 0
+    after = browser.Eval("1", p)
+    while result.IsOk(after) and n < 100
+      sys.Sleep(0.1)
+      after = browser.Eval("1", p)
+      n += 1
+    end
+    list.All([says64(after), says64(browser.Text("h1", p)), says64(browser.Console(p))])
+  end)
+end
+
 defn isCancelCloses()
   (** A caller that fiber.Cancel stops leaves no Firefox and no profile behind, while the program runs: f is cancelled,
       then Firefox is closed and its profile removed within a few seconds. f ran on before, and Firefox with it, for as

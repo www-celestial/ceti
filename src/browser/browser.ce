@@ -113,11 +113,6 @@ defn watched(task, alive)
   fiber.Wait(task)
 end
 
-failed(r) = match r
-  result.Err(_) -> true
-  else -> false
-end
-
 defn newProfile(dir, program)
   (** A new profile in dir for one Firefox: a copy of the template of dir for this version of Firefox, made first when
       dir has none. The template's name holds the version and the build, as firefox --full-version writes them,
@@ -347,15 +342,14 @@ defn hereOf(full, profile)
 end
 
 defn quit(b, fx)
-  (** Closes Firefox: browser.close when the session is open, else the TERM signal; then up to quitTime seconds for its
-      output to end, which comes when it and the processes it started have ended, and its exit. If it still runs, the
-      TERM signal and as long again. Once it has ended, an Ok of its exit code, or of missing when it took a TERM
-      signal; an Err of the kind "browser" if it still runs. *)
-  stopped = value.IsMissing(b)
+  (** Closes Firefox: browser.close when the session is open, else the TERM signal, as when a message too large ended
+      it while Firefox ran; then up to quitTime seconds for its output to end, which comes when it and the processes it
+      started have ended, and its exit. If it still runs, the TERM signal and as long again. Once it has ended, an Ok of
+      its exit code, or of missing when it took a TERM signal; an Err of the kind "browser" if it still runs. *)
+  closing = if value.IsMissing(b) missing else call("browser.close", {}, b, wait = quitTime) end
+  stopped = value.IsMissing(b) or (failed(closing) and endedTooBig(b))
   if stopped
     sys.Stop(fx.Proc)
-  else
-    _ = call("browser.close", {}, b, wait = quitTime)
   end
   quiet = result.IsOk(fiber.Wait(fx.Output, timeout = quitTime))
   exit = fiber.Spawn(() -> sys.WaitExit(fx.Proc))

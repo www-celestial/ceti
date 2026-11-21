@@ -8,6 +8,7 @@ use std/fiber
 use std/json
 use std/dict
 use std/list
+use std/math
 use std/result
 use std/text
 use std/value
@@ -25,13 +26,32 @@ failure(kind, message) = result.Err({Kind: kind, Message: message})
 lost() = failure("closed", "Firefox has closed.")
 isClosed(ch) = fiber.Receive(ch, timeout = 0).Error.Kind == "closed"
 
+(* The largest message of Firefox that Ceti reads, in bytes: 64 MiB, the DefaultMaxMessage of std/websocket. A larger
+   one ends the connection, as the WebSocket can't skip a message. *)
+maxMessage = websocket.DefaultMaxMessage
+
+(* Why a session ended when a message of Firefox passed maxMessage: the steps after it say so. *)
+tooBig = failure("closed", "Firefox sent a message of more than $(math.Div(maxMessage, 1048576)) MiB, the most Ceti reads, which ended the session: a page does it with a line of that size in its console, or a screenshot, a PDF or a value of Eval that large. Firefox ran on, and closes with the browser.")
+
+defn whyEnded(s)
+  (** Why a session has ended, once its dispatcher has said it: tooBig, or lost() for a Firefox that has closed. *)
+  why = fiber.Wait(s.dispatcher, timeout = 0)
+  if result.IsOk(why) and failed(why.Value) why.Value else lost() end
+end
+
+defn endedTooBig(s)
+  (** Did a message of Firefox too large end the session, while Firefox ran? *)
+  why = fiber.Wait(s.dispatcher, timeout = 0)
+  result.IsOk(why) and value.Equal(why.Value, tooBig)
+end
+
 (* What the console keeps of each user context: its last entries, each cut to its first characters. *)
 consoleEntries = 1000
 entryLength = 16384
 
 defn open(url)
   (** Connects to the BiDi server of Firefox at url and starts its dispatcher: an Ok of a session, or an Err. *)
-  c = websocket.Dial(url)?
+  c = websocket.Dial(url, maxMessage = maxMessage)?
   requests = fiber.Channel()
   gone = fiber.Channel()
   result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone)), missing, missing))
@@ -41,7 +61,7 @@ defn call(method, params, s, wait = answerTime)
   (** Sends a command and waits for its answer, at most wait seconds: an Ok of its result, an Err of the kind "browser"
       with the error's Code and Message, of the kind "closed" once the connection has ended, or of the kind "timeout". *)
   if isClosed(s.gone)
-    return lost()
+    return whyEnded(s)
   end
   reply = fiber.Channel(size = 1)
   fiber.Send({Method: method, Params: params, Reply: reply}, s.requests)
@@ -57,7 +77,7 @@ defn ahead(method, params, s)
       writes the commands in the order they come, so a command sent ahead reaches Firefox before the next one. *)
   reply = fiber.Channel(size = 1)
   if isClosed(s.gone)
-    fiber.Send(lost(), reply)
+    fiber.Send(whyEnded(s), reply)
   else
     fiber.Send({Method: method, Params: params, Reply: reply}, s.requests)
   end
@@ -77,12 +97,12 @@ end
 defn ask(r, s)
   (** Sends the dispatcher a request of its own, as a watch, and gives its answer, or an Err of the kind "closed". *)
   if isClosed(s.gone)
-    return lost()
+    return whyEnded(s)
   end
   reply = fiber.Channel(size = 1)
   fiber.Send(dict.Put("Reply", reply, r), s.requests)
   got = fiber.Receive(reply, timeout = answerTime)
-  if result.IsErr(got) lost() else got.Value end
+  if result.IsErr(got) whyEnded(s) else got.Value end
 end
 
 defn watch(methods, test, run, s, once = true, only = false)
@@ -110,7 +130,8 @@ defn dispatch(c, requests, gone)
       the navigation under way in each browsing context, holds each Settle until that navigation has ended, and ends
       the subscription of each Disarm once the navigation of its context has its document or has ended, or at once when
       none is under way. At the end, the requests that wait get an Err of the kind "closed", as do those that come
-      after. *)
+      after, which says why: tooBig when a message of Firefox passed maxMessage. It gives that Err, which whyEnded
+      reads, or lost() after a Stop. *)
   s = {requests: requests, gone: gone}
   waiting = dict.Dict()
   watches = dict.Dict()
@@ -119,14 +140,20 @@ defn dispatch(c, requests, gone)
   held = dict.Dict()
   armed = dict.Dict()
   next = 0
+  why = lost()
+  stopped = false
   while true
     got = fiber.Select([requests, c.Messages])
     if result.IsErr(got)
+      (* The connection ended: Close tells how, before any step hears of it. *)
+      how = websocket.Close(c)
+      why = if result.IsErr(how) and text.StartsWith("1009:", how.Error.Message) tooBig else lost() end
       break
     end
     if got.Value.Channel == requests
       r = got.Value.Value
       if dict.Has("Stop", r)
+        stopped = true
         break
       end
       next += 1
@@ -212,22 +239,30 @@ defn dispatch(c, requests, gone)
     end
   end
   for reply in dict.Values(waiting)
-    fiber.Send(lost(), reply)
+    fiber.Send(why, reply)
   end
   for replies in dict.Values(held)
     for reply in replies
-      fiber.Send(lost(), reply)
+      fiber.Send(why, reply)
     end
   end
   fiber.Close(gone)
   more = fiber.Receive(requests, timeout = 0)
   while result.IsOk(more)
     if dict.Has("Reply", more.Value)
-      fiber.Send(lost(), more.Value.Reply)
+      fiber.Send(why, more.Value.Reply)
     end
     more = fiber.Receive(requests, timeout = 0)
   end
-  _ = websocket.Close(c)
+  if stopped
+    _ = websocket.Close(c)
+  end
+  why
+end
+
+failed(r) = match r
+  result.Err(_) -> true
+  else -> false
 end
 
 (* The holds of the Settles of a context, released: each gets Ok(missing). *)
