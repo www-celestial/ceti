@@ -71,8 +71,8 @@ it, and the other removes its own. A copy never meets a template half made.
 
 The folder can be removed whenever no Firefox runs from it: the next start makes the template again. Beside the
 template, a `profile-` folder is the profile of a Firefox that runs, and a `build-` folder a template being made; one
-that stays after Firefox has ended comes from a program that a stop signal ended ([No Firefox left
-behind](#no-firefox-left-behind)), from a `kill -9`, or from a power cut, and can be removed.
+that stays after Firefox has ended comes from a program that a stop signal ended (see No Firefox left behind), from a
+`kill -9`, or from a power cut, and can be removed.
 
 ### Permissions
 
@@ -96,9 +96,9 @@ reads and writes every file the user may, as `firefox --screenshot PATH` writes 
 any folder, and reaches every host, past `net=`. So `read=` and `write=` don't confine a program that has
 `exec=firefox`: give it only to a program you trust as yourself. What Ceti's own functions keep is narrower: they never
 make Firefox read or write, for the program, a file that its permissions don't name. `Go` asks for `read=` of a local
-file ([Pages](#pages)), `Upload` for `read=` of each file it gives ([Forms](#forms)), and `Download` saves only at a
-path of `write=` ([Downloads](#downloads)). That guards a program that passes on a URL or a path it didn't write
-itself, as a crawler that follows links; it doesn't hold back a program that means harm.
+file (see Pages), `Upload` for `read=` of each file it gives (see Forms), and `Download` saves only at a path of
+`write=` (see Downloads). That guards a program that passes on a URL or a path it didn't write itself, as a crawler
+that follows links; it doesn't hold back a program that means harm.
 
 **Private folders.** A profile holds the cookies and the storage of its pages while Firefox runs, so Ceti makes the
 folder given to `Firefox`, its template, each profile and the folder where a download waits yours alone, with Cesia's
@@ -462,8 +462,8 @@ end
 with `sys.Stat`: the program needs `read=` for it, and Cesia follows links, so a link can't lead out of the folders that
 `read=` allows; without it, the program stops with Cesia's message, as for any read. Only regular files are taken.
 That is what Upload keeps: it gives Firefox no file that the program may not read, whatever path it is handed. It is no
-fence around the program, which has `exec=firefox` ([Permissions](#permissions)), and the page gets what each file holds,
-as a site gets what a person uploads to it.
+fence around the program, which has `exec=firefox` (see Permissions), and the page gets what each file holds, as a
+site gets what a person uploads to it.
 Firefox needs absolute paths, and Cesia gives no current folder, so Ceti learns it from Firefox: the absolute path of the
 profile, less the relative one Ceti gave it. A relative path is so taken from the current folder when the folder given to
 `browser.Firefox` is relative, as `.cesia/firefox`; with an absolute one, as `test.Temp()`, give absolute paths.
@@ -658,8 +658,8 @@ seconds after the action is an `Err` of the kind `"timeout"`, a download that fa
 
 That is what Ceti keeps: a page that Ceti drives saves no file where the program has no `write=`, neither by a
 download that no `Download` waits for nor by the name it gives its file, and the file it saves lands at `to` alone. It
-doesn't keep the program itself out of a folder, since `exec=firefox` lets it drive a Firefox of its own
-([Permissions](#permissions)), nor does it look at what the file holds: a page chooses that.
+doesn't keep the program itself out of a folder, since `exec=firefox` lets it drive a Firefox of its own (see
+Permissions), nor does it look at what the file holds: a page chooses that.
 
 ## Screenshots and PDF
 
@@ -784,7 +784,7 @@ all of them. Firefox ends; what becomes of its profile depends on the program:
 
 - **A program that doesn't take the stop signals**, as most scripts, ends at once, as Cesia ends it at the first one.
   The profile stays in the folder, as nothing of the program runs after the signal to remove it. It is yours alone
-  ([Private folders](#permissions)), and can be removed.
+  (see Private folders, under Permissions), and can be removed.
 - **A program that takes them**, by `sys.Stops` as a server does, goes on: the function gets an `Err` of the kind
   `"closed"` at its next step, as Firefox has ended, and `Firefox` removes the profile before it gives back what the
   function gave. A second signal ends any program at once, and its profile stays.

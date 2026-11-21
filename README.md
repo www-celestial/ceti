@@ -31,7 +31,7 @@ cesia run --allow exec=firefox,net=127.0.0.1,read=work,write=work,write=page.png
 
 `exec=firefox` is total trust, as `ffi=` is: a program that may start Firefox may start one of its own, with any
 arguments, which reads and writes every file of the user. Give it only to a program you trust; the guide says what
-Ceti's own functions keep ([Permissions](docs/book/guide.md#permissions)).
+Ceti's own functions keep, under Permissions.
 
 `browser.Firefox(f, dir)` starts Firefox **headless**, without a window, on a new profile in `dir` (a profile is the
 folder where a browser keeps its settings, cookies and cache), calls `f` with the browser, then closes Firefox and removes
