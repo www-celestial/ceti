@@ -207,10 +207,12 @@ leftovers = ["cache2", "crashes", "minidumps", "datareporting", "saved-telemetry
 
 defn firstStart(program, profile)
   (** Starts Firefox once on an empty profile, headless, and closes it before any page: the template's work, done once.
-      Ok(missing) once Firefox ended by itself with the code 0, with its lock and its leftovers removed, or an Err. *)
+      Ok(missing) once Firefox ended by itself with the code 0, with its lock and its leftovers removed, or an Err. It
+      has startTime seconds to end, rather than quitTime, since a first start writes the most, and a Firefox that a
+      loaded machine slows ends by the TERM signal, which keeps no template. *)
   fx = launch(program, true, profile)?
   opened = connect(fx.Url, profile)
-  code = quit(if result.IsOk(opened) opened.Value else missing end, fx)?
+  code = quit(if result.IsOk(opened) opened.Value else missing end, fx, wait = startTime)?
   opened?
   if code != 0
     return result.Err({Kind: "browser", Message: "Firefox didn't end by itself once closed, on its first start in $profile: no template is kept."})
@@ -298,7 +300,8 @@ lastLines(lines) = if value.Len(lines) > 20 list.Skip(value.Len(lines) - 20, lin
 
 defn drained(proc, lines, rest)
   (** Reads the output of Firefox to its end, which comes when Firefox and the processes it started have ended, so that
-      its pipe never fills: it gives the last 20 lines. *)
+      its pipe never fills: it gives the last 20 lines. quit cancels it when that end doesn't come, before it takes the
+      exit of Firefox, after which no output can be read. *)
   got = sys.ReadOutput(proc)
   while result.IsOk(got) and got.Value != ""
     parts = text.Split("\n", "$rest$(got.Value)")
@@ -341,20 +344,32 @@ defn hereOf(full, profile)
   text.ByteSlice(1, text.ByteLength(full) - text.ByteLength(tail), full)
 end
 
-defn quit(b, fx)
+defn quit(b, fx, wait = quitTime)
   (** Closes Firefox: browser.close when the session is open, else the TERM signal, as when a message too large ended
-      it while Firefox ran; then up to quitTime seconds for its output to end, which comes when it and the processes it
-      started have ended, and its exit. If it still runs, the TERM signal and as long again. Once it has ended, an Ok of
-      its exit code, or of missing when it took a TERM signal; an Err of the kind "browser" if it still runs. *)
+      it while Firefox ran; then up to wait seconds for its output to end, which comes when it and the processes it
+      started have ended. If it hasn't, the TERM signal and quitTime seconds more; if it still hasn't, as when a
+      process that Firefox started holds it, Ceti stops reading it. Only then does it take Firefox's exit, after which
+      its output can't be read: the fiber that reads it never meets a process that has ended. Once Firefox has ended,
+      an Ok of its exit code, or of missing when it took a TERM signal; an Err of the kind "browser" if it still runs
+      quitTime seconds after the TERM signal. *)
   closing = if value.IsMissing(b) missing else call("browser.close", {}, b, wait = quitTime) end
   stopped = value.IsMissing(b) or (failed(closing) and endedTooBig(b))
   if stopped
     sys.Stop(fx.Proc)
   end
-  quiet = result.IsOk(fiber.Wait(fx.Output, timeout = quitTime))
+  quiet = result.IsOk(fiber.Wait(fx.Output, timeout = wait))
+  if not quiet and not stopped
+    sys.Stop(fx.Proc)
+    stopped = true
+    quiet = result.IsOk(fiber.Wait(fx.Output, timeout = quitTime))
+  end
+  if not quiet
+    fiber.Cancel(fx.Output)
+    _ = fiber.Wait(fx.Output)
+  end
   exit = fiber.Spawn(() -> sys.WaitExit(fx.Proc))
-  ended = fiber.Wait(exit, timeout = if quiet 1 else 0.1 end)
-  if result.IsErr(ended)
+  ended = fiber.Wait(exit, timeout = if stopped quitTime else 1 end)
+  if result.IsErr(ended) and not stopped
     sys.Stop(fx.Proc)
     stopped = true
     ended = fiber.Wait(exit, timeout = quitTime)
@@ -363,7 +378,7 @@ defn quit(b, fx)
     hangUp(b)
   end
   if result.IsErr(ended)
-    return result.Err({Kind: "browser", Message: "Firefox still runs $(2 * quitTime) seconds after it was closed, and after a TERM signal."})
+    return result.Err({Kind: "browser", Message: "Firefox still runs $quitTime seconds after a TERM signal, once closed."})
   end
   result.Ok(if stopped missing else ended.Value end)
 end

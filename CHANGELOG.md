@@ -53,6 +53,8 @@ Firefox serves itself: no Node, no driver program, no download of a browser.
   the program ended meanwhile.
 - A message of Firefox past 64 MiB, as a page's console line that large, ends the session with an `Err` that says so,
   rather than "Firefox has closed.", and Firefox is closed at once: it took 10 s more and printed a panic.
+- A Firefox slow to end no longer prints the panic "This process has ended.": Ceti stops reading its output before it
+  takes its exit. The first start in a folder has 30 s to end rather than 5, so a loaded machine keeps its template.
 
 ### Docs
 

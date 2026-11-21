@@ -747,7 +747,8 @@ A headless Firefox with one page takes about 0.4 GB of memory (one measure). `br
 after an `Ok`, an `Err` or a panic of the function, and when the fiber that called it is stopped by `fiber.Cancel`. It
 waits until Firefox and the processes it started have ended, then removes the profile. If Firefox still runs 5 seconds
 after it was closed, it gets the TERM signal, and 5 seconds more; then `Firefox` gives an `Err` of the kind
-`"browser"`.
+`"browser"`. The first start in a folder has 30 seconds rather than 5, as a Firefox that a loaded machine slows would
+else end by the TERM signal, and a template must come from a Firefox that ended by itself.
 
 **A cancelled caller.** `Firefox` runs in a fiber of its own, which nothing else stops, as `sql.Transaction` does, and
 its caller says four times a second that it still waits. When `fiber.Cancel` stops the caller, that fiber hears nothing
