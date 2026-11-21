@@ -741,10 +741,20 @@ for each start that it spares.
 ## No Firefox left behind
 
 A headless Firefox with one page takes about 0.4 GB of memory (one measure). `browser.Firefox` closes it in every case while the program runs:
-after an `Ok`, an `Err` or a panic of the function, and when the fiber that called it is stopped by `fiber.Cancel`, as
-it runs in a fiber of its own. It waits until Firefox and the processes it started have ended, then removes the profile.
-If Firefox still runs 5 seconds after it was closed, it gets the TERM signal, and 5 seconds more; then `Firefox` gives
-an `Err` of the kind `"browser"`.
+after an `Ok`, an `Err` or a panic of the function, and when the fiber that called it is stopped by `fiber.Cancel`. It
+waits until Firefox and the processes it started have ended, then removes the profile. If Firefox still runs 5 seconds
+after it was closed, it gets the TERM signal, and 5 seconds more; then `Firefox` gives an `Err` of the kind
+`"browser"`.
+
+**A cancelled caller.** `Firefox` runs in a fiber of its own, which nothing else stops, as `sql.Transaction` does, and
+its caller says four times a second that it still waits. When `fiber.Cancel` stops the caller, that fiber hears nothing
+more: about 1.5 s later it cancels the function, at its next wait, then closes Firefox and removes the profile as after
+any end; in all, about 3 s after the cancel. A late word, as when a long computation held the program, cancels nothing:
+the fiber takes the caller for stopped only after two waits in a row without one. This holds while the program runs: a
+program that ends just after the cancel ends without it, since Cesia ends a program when its own code ends, its other
+fibers with it, and stops no program that it started then. Firefox then runs on, and its profile stays. A program that
+must end at once tells its function to end, by a channel that the function listens to, and waits for `Firefox`, rather
+than cancel it.
 
 A test that runs past its time is stopped by `cesia test`, which ends at the end of each test the programs it started:
 the TERM signal, and KILL a second later. A `kill -9` of the Cesia program itself leaves Firefox running: nothing can

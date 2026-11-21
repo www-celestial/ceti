@@ -355,6 +355,28 @@ defn isPanicCloses()
   text.Contains("on purpose", message) and value.Len(others(kept)?) == 0
 end
 
+defn isCancelCloses()
+  (** A caller that fiber.Cancel stops leaves no Firefox and no profile behind, while the program runs: f is cancelled,
+      then Firefox is closed and its profile removed within a few seconds. f ran on before, and Firefox with it, for as
+      long as f wanted, and for good when the program ended meanwhile. *)
+  ready = fiber.Channel()
+  went = fiber.Channel()
+  t = fiber.Spawn(() -> browser.Firefox(defn (b)
+    fiber.Send(true, ready)
+    sys.Sleep(25)
+    fiber.Send("f ran on", went)
+  end, kept))
+  fiber.Receive(ready, timeout = 20)?
+  fiber.Cancel(t)
+  stopped = fiber.Wait(t).Error.Kind == "cancelled"
+  n = 0
+  while value.Len(others(kept)?) > 0 and n < 100
+    sys.Sleep(0.1)
+    n += 1
+  end
+  list.All([stopped, value.Len(others(kept)?) == 0, fiber.Receive(went, timeout = 0).Error.Kind == "timeout"])
+end
+
 defn isErrGivenBack()
   value.Equal(browser.Firefox(b -> result.Err("mine"), kept), result.Err("mine")) and value.Len(others(kept)?) == 0
 end

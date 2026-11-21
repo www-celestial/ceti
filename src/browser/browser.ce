@@ -28,27 +28,43 @@ listeningOn = "WebDriver BiDi listening on "
 defn Firefox(f, dir, headless = true, program = "firefox")
   (** Starts Firefox on a new profile in the folder dir, calls f(b) with the browser b, then closes Firefox and removes
       its profile, whatever f gives, an Ok, an Err or a panic: it gives what f gave, or panics again if f panicked. As
-      sql.Transaction does, it runs in a fiber of its own, so that a caller stopped by fiber.Cancel leaves no Firefox
-      behind. The profile is a copy of the template that dir keeps for this version of Firefox: the profile of a Firefox
-      started once and closed before any page, made at the first start in dir and again when the version changes, and
-      never changed by a run, so that no run sees what another one did. A folder kept between runs, as .cesia/firefox,
-      gets Firefox ready in about 1.0 s instead of 2.1 s; the first start in it, which makes the template, in about
-      4.2 s. headless = false shows the window, to look at a problem. program is the command of Firefox, as
-      /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An Err of the kind "browser" when Firefox can't start,
-      or doesn't end once closed. It needs exec= for program, net=127.0.0.1 for the port Firefox chooses, and read= and
-      write= for dir, where the template and the profiles are made and the profiles removed. dir becomes its owner's
-      alone (0700), as the template and each profile are, since a profile holds its pages' cookies and storage; a dir
-      or a template that belongs to someone else is an Err of the kind "browser". exec= of Firefox is total
-      trust, as ffi= is: the program may start a Firefox of its own, with any arguments, which reads and writes every
-      file of the user; Ceti's own functions read and write only what the permissions name. *)
-  rethrow(result.Unwrap(fiber.Wait(fiber.Spawn(() -> whole(f, dir, headless, program)))))
+      sql.Transaction does, it runs in a fiber of its own, which nothing else stops: when fiber.Cancel stops its caller,
+      it cancels f within about 1.5 s, then closes Firefox and removes the profile all the same, as long as the program
+      runs; a program that ends just after leaves Firefox running and its profile. The profile is a copy of the template
+      that dir keeps for this version of Firefox: the profile of a Firefox started once and closed before any page, made
+      at the first start in dir and again when the version changes, and never changed by a run, so that no run sees what
+      another one did. A folder kept between runs, as .cesia/firefox, gets Firefox ready in about 1.0 s instead of
+      2.1 s; the first start in it, which makes the template, in about 4.2 s. headless = false shows the window, to look
+      at a problem. program is the command of Firefox, as /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An
+      Err of the kind "browser" when Firefox can't start, or doesn't end once closed. It needs exec= for program,
+      net=127.0.0.1 for the port Firefox chooses, and read= and write= for dir, where the template and the profiles are
+      made and the profiles removed. dir becomes its owner's alone (0700), as the template and each profile are, since a
+      profile holds its pages' cookies and storage; a dir or a template that belongs to someone else is an Err of the
+      kind "browser". exec= of Firefox is total trust, as ffi= is: the program may start a Firefox of its own, with any
+      arguments, which reads and writes every file of the user; Ceti's own functions read and write only what the
+      permissions name. *)
+  alive = fiber.Channel()
+  task = fiber.Spawn(() -> whole(f, dir, headless, program, alive))
+  while true
+    (* The caller beats while it waits: a caller that fiber.Cancel stopped beats no more, and whole sees it. *)
+    got = fiber.Wait(task, timeout = beat)
+    if result.IsOk(got) or got.Error.Kind != "timeout"
+      return rethrow(result.Unwrap(got))
+    end
+    fiber.Send(true, alive)
+  end
 end
+
+(* How often, in seconds, the caller of Firefox says that it still waits, and how many beats whole lets pass, twice in a
+   row, before it takes the caller for stopped. *)
+beat = 0.25
+patience = 3
 
 isPanic(x) = value.IsDict(x) and dict.Has("Panic", x)
 rethrow(out) = if isPanic(out) bug.Panic(out.Panic) else out end
 
-defn whole(f, dir, headless, program)
-  (** Firefox(f, dir): what f gave, or a {Panic} of its message. *)
+defn whole(f, dir, headless, program, alive)
+  (** Firefox(f, dir): what f gave, or a {Panic} of its message; alive is the channel of the caller's beats. *)
   profile = newProfile(dir, program)?
   started = launch(program, headless, profile)
   if result.IsErr(started)
@@ -63,7 +79,7 @@ defn whole(f, dir, headless, program)
     return opened
   end
   b = opened.Value
-  ran = fiber.Wait(fiber.Spawn(() -> f(b)))
+  ran = watched(fiber.Spawn(() -> f(b)), alive)
   ended = quit(b, fx)
   removed = removeTree(profile)
   out = match ran
@@ -76,6 +92,25 @@ defn whole(f, dir, headless, program)
   ended?
   removed?
   out
+end
+
+defn watched(task, alive)
+  (** What fiber.Wait gives of the task of f, while the caller beats on alive; once it has stopped, the task is cancelled
+      and its Err of the kind "cancelled" given, for whole to close Firefox all the same. A beat that is late, as when a
+      long computation held the program, can't stop f: whole takes the caller for stopped only after two waits in a row
+      without one, and the second one ends after the caller's own wait, which beats as soon as it ends. *)
+  over = fiber.Channel()
+  fiber.Spawn(() -> fiber.Send(fiber.Wait(task), over))
+  missed = 0
+  while missed < 2
+    got = fiber.Select([over, alive], timeout = patience * beat)
+    if result.IsOk(got) and got.Value.Channel == over
+      return got.Value.Value
+    end
+    missed = if result.IsOk(got) 0 else missed + 1 end
+  end
+  fiber.Cancel(task)
+  fiber.Wait(task)
 end
 
 failed(r) = match r

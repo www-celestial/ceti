@@ -48,6 +48,9 @@ Firefox serves itself: no Node, no driver program, no download of a browser.
 - The folder given to `Firefox`, its template, each profile and each download folder are their owner's alone (0700, the
   files Ceti copies 0600, `key4.db` and `cert9.db` included), and a folder or a template of someone else is refused;
   they were 0755 and 0644. The guide says when a stop signal leaves a profile behind.
+- A caller that `fiber.Cancel` stops leaves no Firefox and no profile behind while the program runs: the function is
+  cancelled, then Firefox closed and the profile removed, about 3 s after the cancel; they ran on before, for good if
+  the program ended meanwhile.
 
 ### Docs
 
