@@ -1,0 +1,24 @@
+(* The file that a URL reads, as Go checks it against the rights of the program: no Firefox, the URLs alone. *)
+use std/list
+use std/text
+use std/value
+
+kinds(urls) = [localFile(u).Error.Kind for u in urls]   (* The kinds of the Errs of localFile, one for each URL. *)
+
+defn isLocalFileReadAsFirefoxReads()
+  (** Each form of a file: URL that Firefox reads gives the file it reads, through view-source: and jar: too, its %XX
+      decoded to the bytes of the name, and a URL that reads no file gives missing. *)
+  read = [localFile(u).Value for u in ["file:///a/b.html", " \tFILE:/a/./c/../b.html\n", "fi\nle://LocalHost/a/b.html#x?y", "file:///a/caf%C3%A9.html", "file:///a/b+c.html", "file:///a/%ff", "VIEW-SOURCE:view-source: jar:file:///a/z.zip!/b.html", "jar:file:///a/z.zip", "file:///../../a"]]
+  none = [localFile(u).Value for u in ["https://example.com/file:///a", "about:blank", "data:text/html,file:///a", "javascript:1", "view-source:https://example.com/"]]
+  list.All([
+    value.Equal(read, ["/a/b.html", "/a/b.html", "/a/b.html", "/a/café.html", "/a/b+c.html", "/a/$(text.FromBytes([255]))", "/a/z.zip", "/a/z.zip", "/a"]),
+    value.Equal(none, [missing, missing, missing, missing, missing])])
+end
+
+defn isLocalFileRefusesOtherForms()
+  (** A file: URL that Firefox could read as another file than the one Cesia would check is an Err of the kind
+      "browser": another host, a path that doesn't start with /, a backslash, %XX of a dot, a slash, a backslash or the
+      zero byte, or a jar: URL of more than one archive. *)
+  odd = ["file://host/a", "file:a", "file:\\a", "file:/a\\..\\b", "file:///a/%2E%2e/b", "file:///a/..%2fb", "file:///a/%5Cb", "file:///a/b%00.html", "jar:file:///a!b/z.zip!/c", "view-source:file://127.0.0.1/a"]
+  value.Equal(kinds(odd), list.Fill("browser", value.Len(odd)))
+end

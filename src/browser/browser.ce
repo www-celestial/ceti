@@ -28,23 +28,44 @@ listeningOn = "WebDriver BiDi listening on "
 defn Firefox(f, dir, headless = true, program = "firefox")
   (** Starts Firefox on a new profile in the folder dir, calls f(b) with the browser b, then closes Firefox and removes
       its profile, whatever f gives, an Ok, an Err or a panic: it gives what f gave, or panics again if f panicked. As
-      sql.Transaction does, it runs in a fiber of its own, so that a caller stopped by fiber.Cancel leaves no Firefox
-      behind. The profile is a copy of the template that dir keeps for this version of Firefox: the profile of a Firefox
-      started once and closed before any page, made at the first start in dir and again when the version changes, and
-      never changed by a run, so that no run sees what another one did. A folder kept between runs, as .cesia/firefox,
-      gets Firefox ready in about 1.0 s instead of 2.1 s; the first start in it, which makes the template, in about
-      4.2 s. headless = false shows the window, to look at a problem. program is the command of Firefox, as
-      /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An Err of the kind "browser" when Firefox can't start,
-      or doesn't end once closed. It needs exec= for program, net=127.0.0.1 for the port Firefox chooses, and read= and
-      write= for dir, where the template and the profiles are made and the profiles removed. *)
-  rethrow(result.Unwrap(fiber.Wait(fiber.Spawn(() -> whole(f, dir, headless, program)))))
+      sql.Transaction does, it runs in a fiber of its own, which nothing else stops: when fiber.Cancel stops its caller,
+      it cancels f within about 1.5 s, then closes Firefox and removes the profile all the same, as long as the program
+      runs; a program that ends just after leaves Firefox running and its profile. The profile is a copy of the template
+      that dir keeps for this version of Firefox: the profile of a Firefox started once and closed before any page, made
+      at the first start in dir and again when the version changes, and never changed by a run, so that no run sees what
+      another one did. A folder kept between runs, as .cesia/firefox, gets Firefox ready in about 1.0 s instead of
+      2.1 s; the first start in it, which makes the template, in about 4.2 s. headless = false shows the window, to look
+      at a problem. program is the command of Firefox, as /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An
+      Err of the kind "browser" when Firefox can't start, or doesn't end once closed. It needs exec= for program,
+      net=127.0.0.1 for the port Firefox chooses, and read= and write= for dir, where the template and the profiles are
+      made and the profiles removed. A dir that isn't there is made its owner's alone (0700), as the template and each
+      profile are, since a profile holds its pages' cookies and storage; one that is there keeps its mode, and must be
+      the person's own, with no one else allowed to write in it: else, as for a template of someone else, an Err of the
+      kind "browser". exec= of Firefox is total trust, as ffi= is: the program may start a Firefox of its own, with any
+      arguments, which reads and writes every file of the user; Ceti's own functions read and write only what the
+      permissions name. *)
+  alive = fiber.Channel()
+  task = fiber.Spawn(() -> whole(f, dir, headless, program, alive))
+  while true
+    (* The caller beats while it waits: a caller that fiber.Cancel stopped beats no more, and whole sees it. *)
+    got = fiber.Wait(task, timeout = beat)
+    if result.IsOk(got) or got.Error.Kind != "timeout"
+      return rethrow(result.Unwrap(got))
+    end
+    fiber.Send(true, alive)
+  end
 end
+
+(* How often, in seconds, the caller of Firefox says that it still waits, and how many beats whole lets pass, twice in a
+   row, before it takes the caller for stopped. *)
+beat = 0.25
+patience = 3
 
 isPanic(x) = value.IsDict(x) and dict.Has("Panic", x)
 rethrow(out) = if isPanic(out) bug.Panic(out.Panic) else out end
 
-defn whole(f, dir, headless, program)
-  (** Firefox(f, dir): what f gave, or a {Panic} of its message. *)
+defn whole(f, dir, headless, program, alive)
+  (** Firefox(f, dir): what f gave, or a {Panic} of its message; alive is the channel of the caller's beats. *)
   profile = newProfile(dir, program)?
   started = launch(program, headless, profile)
   if result.IsErr(started)
@@ -59,7 +80,7 @@ defn whole(f, dir, headless, program)
     return opened
   end
   b = opened.Value
-  ran = fiber.Wait(fiber.Spawn(() -> f(b)))
+  ran = watched(fiber.Spawn(() -> f(b)), alive)
   ended = quit(b, fx)
   removed = removeTree(profile)
   out = match ran
@@ -74,9 +95,23 @@ defn whole(f, dir, headless, program)
   out
 end
 
-failed(r) = match r
-  result.Err(_) -> true
-  else -> false
+defn watched(task, alive)
+  (** What fiber.Wait gives of the task of f, while the caller beats on alive; once it has stopped, the task is cancelled
+      and its Err of the kind "cancelled" given, for whole to close Firefox all the same. A beat that is late, as when a
+      long computation held the program, can't stop f: whole takes the caller for stopped only after two waits in a row
+      without one, and the second one ends after the caller's own wait, which beats as soon as it ends. *)
+  over = fiber.Channel()
+  fiber.Spawn(() -> fiber.Send(fiber.Wait(task), over))
+  missed = 0
+  while missed < 2
+    got = fiber.Select([over, alive], timeout = patience * beat)
+    if result.IsOk(got) and got.Value.Channel == over
+      return got.Value.Value
+    end
+    missed = if result.IsOk(got) 0 else missed + 1 end
+  end
+  fiber.Cancel(task)
+  fiber.Wait(task)
 end
 
 defn newProfile(dir, program)
@@ -85,13 +120,20 @@ defn newProfile(dir, program)
       template-Mozilla-Firefox-159.0-20261027034604-20261027034604, since Firefox refuses a profile of a later version
       than its own, and does its first-start work again on one of an earlier version. It is made in a folder of its
       own, then renamed at once, so that a copy never meets one half made: when another Firefox made it meanwhile, its
-      own goes. The templates of other versions then go. The copy gets the preferences of prefs. *)
+      own goes. The templates of other versions then go. The copy gets the preferences of prefs. The template and the
+      copy are their owner's alone, folders 0700 and files 0600, as dir when it wasn't there; owned says which dir is
+      refused, and a template of someone else is. *)
   ran = sys.Run(program, args = ["--full-version"])
   if result.IsErr(ran) or ran.Value.Code != 0
     return result.Err({Kind: "browser", Message: "$program --full-version gave no version."})
   end
   model = "$dir/template-$(text.Replace(" ", "-", text.Trim(ran.Value.Out)))"
-  if not sys.Exists(model)
+  owned(dir)?
+  if sys.Exists(model)
+    (* A template that someone else put there, when dir was open to others, is refused: its preferences would steer
+       every Firefox of dir, as through a proxy. *)
+    mine(model)?
+  else
     build = newFolder(dir, "build")?
     made = firstStart(program, build)
     moved = if result.IsOk(made) sys.Rename(build, model) else made end
@@ -109,7 +151,7 @@ defn newProfile(dir, program)
   end
   p = newFolder(dir, "profile")?
   copied = copyTree(model, p)
-  copied = if result.IsOk(copied) sys.Write("$p/user.js", prefs) else copied end
+  copied = if result.IsOk(copied) sys.Write("$p/user.js", prefs, private = true) else copied end
   if result.IsErr(copied)
     _ = removeTree(p)
     return copied
@@ -122,8 +164,13 @@ end
    Emulate gave, with no question that no one would answer, or else an error at once: never the machine's own place,
    which Firefox would ask of a network service or of GeoClue; and no page is kept in the back-forward cache, so that a
    page that history.back() brings back loads again: Firefox 160 tells of a page taken from that cache only that its
-   navigation started, and a step after it would wait for a load that never comes. *)
+   navigation started, and a step after it would wait for a load that never comes; and a local page, of a file: URL, is
+   an origin of its own, as Firefox makes it when no program drives it: its scripts read no other file of the machine,
+   which the preferences of WebDriver BiDi would let them do; and a download goes into no list of the desktop's recent
+   files, ~/.local/share/recently-used.xbel, a lasting record of what was automated. *)
 prefs = "user_pref(\"general.smoothScroll\", false);
+user_pref(\"security.fileuri.strict_origin_policy\", true);
+user_pref(\"browser.download.manager.addToRecentDocs\", false);
 user_pref(\"browser.sessionhistory.max_total_viewers\", 0);
 user_pref(\"geo.prompt.testing\", true);
 user_pref(\"geo.prompt.testing.allow\", true);
@@ -133,15 +180,50 @@ user_pref(\"geo.provider.use_corelocation\", false);
 user_pref(\"geo.provider.use_gpsd\", false);
 "
 
+defn owned(dir)
+  (** The folder given to Firefox, once it is safe to keep templates and profiles in it: made its owner's alone, 0700,
+      with the folders above it that it makes, when it isn't there; kept as it is when it is, as long as it is a folder
+      of the person's own that no one else can write in, since its mode is the person's choice. Ok(missing), or an Err
+      of the kind "browser": someone else could put a template in it, which would steer every Firefox started from it,
+      or swap a profile. Stat gives no owner, so a change of the mode to the one it has, which only the owner may make
+      and which changes nothing, tells it. *)
+  if not sys.Exists(dir)
+    return mine(dir)
+  end
+  s = sys.Stat(dir)
+  refused(why) = result.Err({Kind: "browser", Message: "Firefox: $dir $why, so someone else could put a template there, which would steer every Firefox started from it. Give Firefox a folder of your own that only you can write in, as .cesia/firefox."})
+  if result.IsErr(s) or not s.Value.IsDir
+    return refused("is no folder that Ceti can use")
+  end
+  if math.Mod(math.Div(s.Value.Mode, 2), 2) == 1 or math.Mod(math.Div(s.Value.Mode, 16), 2) == 1
+    return refused("can be written in by others, its group or everyone, as /tmp")
+  end
+  if result.IsErr(sys.Chmod(dir, s.Value.Mode))
+    return refused("belongs to someone else")
+  end
+  result.Ok(missing)
+end
+
+defn mine(folder)
+  (** Makes a folder its owner's alone, 0700, as sys.Mkdir does with private = true, and the folders above it that it
+      makes: Ok(missing), or an Err of the kind "browser" when it belongs to someone else, who could then put a template
+      in it, or change what a profile holds. *)
+  made = sys.Mkdir(folder, private = true)
+  if result.IsErr(made)
+    return result.Err({Kind: "browser", Message: "Firefox: $folder can't be made yours alone (0700), as a folder of Firefox profiles must be: $(made.Error.Message) Give Firefox a folder of your own, as .cesia/firefox."})
+  end
+  made
+end
+
 defn newFolder(dir, kind)
-  (** A new empty folder in dir: kind, a dash and the time in microseconds, which no other folder of dir has. *)
-  sys.Mkdir(dir)?
+  (** A new empty folder in dir, which newProfile made private: kind, a dash and the time in microseconds, which no
+      other folder of dir has. It is its owner's alone (0700), as its pages' cookies and storage are no one else's. *)
   n = math.Div(sys.Now() * 1000000, 1)
   while sys.Exists("$dir/$kind-$n")
     n += 1
   end
   p = "$dir/$kind-$n"
-  sys.Mkdir(p)?
+  sys.Mkdir(p, private = true)?
   result.Ok(p)
 end
 
@@ -153,10 +235,12 @@ leftovers = ["cache2", "crashes", "minidumps", "datareporting", "saved-telemetry
 
 defn firstStart(program, profile)
   (** Starts Firefox once on an empty profile, headless, and closes it before any page: the template's work, done once.
-      Ok(missing) once Firefox ended by itself with the code 0, with its lock and its leftovers removed, or an Err. *)
+      Ok(missing) once Firefox ended by itself with the code 0, with its lock and its leftovers removed, or an Err. It
+      has startTime seconds to end, rather than quitTime, since a first start writes the most, and a Firefox that a
+      loaded machine slows ends by the TERM signal, which keeps no template. *)
   fx = launch(program, true, profile)?
   opened = connect(fx.Url, profile)
-  code = quit(if result.IsOk(opened) opened.Value else missing end, fx)?
+  code = quit(if result.IsOk(opened) opened.Value else missing end, fx, wait = startTime)?
   opened?
   if code != 0
     return result.Err({Kind: "browser", Message: "Firefox didn't end by itself once closed, on its first start in $profile: no template is kept."})
@@ -171,16 +255,17 @@ defn firstStart(program, profile)
 end
 
 defn copyTree(from, to)
-  (** Copies the files of a folder into another, at any depth: Ok(missing), or the first Err. A link, or one that leads
-      nowhere, is no part of a profile once Firefox has ended, so it is left out. *)
+  (** Copies the files of a folder into another, at any depth, each its owner's alone, folders 0700 and files 0600, as
+      Firefox makes its keys and its certificates: Ok(missing), or the first Err. A link, or one that leads nowhere, is
+      no part of a profile once Firefox has ended, so it is left out. *)
   for name in sys.List(from)?
     s = sys.Stat("$from/$name")
     if result.IsOk(s) and not s.Value.IsLink
       if s.Value.IsDir
-        sys.Mkdir("$to/$name")?
+        sys.Mkdir("$to/$name", private = true)?
         copyTree("$from/$name", "$to/$name")?
       else
-        sys.Write("$to/$name", sys.Read("$from/$name")?)?
+        sys.Write("$to/$name", sys.Read("$from/$name")?, private = true)?
       end
     end
   end
@@ -243,7 +328,8 @@ lastLines(lines) = if value.Len(lines) > 20 list.Skip(value.Len(lines) - 20, lin
 
 defn drained(proc, lines, rest)
   (** Reads the output of Firefox to its end, which comes when Firefox and the processes it started have ended, so that
-      its pipe never fills: it gives the last 20 lines. *)
+      its pipe never fills: it gives the last 20 lines. quit cancels it when that end doesn't come, before it takes the
+      exit of Firefox, after which no output can be read. *)
   got = sys.ReadOutput(proc)
   while result.IsOk(got) and got.Value != ""
     parts = text.Split("\n", "$rest$(got.Value)")
@@ -259,8 +345,8 @@ defn connect(url, profile)
       start. It asks for the events of the prompts, of the console and of the navigations: the dispatcher dismisses
       each prompt that no Dialog waits for, as no person is there to answer it, keeps the console, and follows the
       navigation under way in each browsing context, for the steps that wait for its document. Downloads are refused:
-      without it, Firefox would save a page's download in the user's download folder, where the program never allowed
-      a write. *)
+      without it, Firefox would save a page's download in the user's download folder, where the program has no
+      write=. *)
   s = open("$url/session")?
   caps = {alwaysMatch: {unhandledPromptBehavior: {default: "ignore"}}}
   started = call("session.new", {capabilities: caps}, s)
@@ -286,21 +372,32 @@ defn hereOf(full, profile)
   text.ByteSlice(1, text.ByteLength(full) - text.ByteLength(tail), full)
 end
 
-defn quit(b, fx)
-  (** Closes Firefox: browser.close when the session is open, else the TERM signal; then up to quitTime seconds for its
-      output to end, which comes when it and the processes it started have ended, and its exit. If it still runs, the
-      TERM signal and as long again. Once it has ended, an Ok of its exit code, or of missing when it took a TERM
-      signal; an Err of the kind "browser" if it still runs. *)
-  stopped = value.IsMissing(b)
+defn quit(b, fx, wait = quitTime)
+  (** Closes Firefox: browser.close when the session is open, else the TERM signal, as when a message too large ended
+      it while Firefox ran; then up to wait seconds for its output to end, which comes when it and the processes it
+      started have ended. If it hasn't, the TERM signal and quitTime seconds more; if it still hasn't, as when a
+      process that Firefox started holds it, Ceti stops reading it. Only then does it take Firefox's exit, after which
+      its output can't be read: the fiber that reads it never meets a process that has ended. Once Firefox has ended,
+      an Ok of its exit code, or of missing when it took a TERM signal; an Err of the kind "browser" if it still runs
+      quitTime seconds after the TERM signal. *)
+  closing = if value.IsMissing(b) missing else call("browser.close", {}, b, wait = quitTime) end
+  stopped = value.IsMissing(b) or (failed(closing) and endedTooBig(b))
   if stopped
     sys.Stop(fx.Proc)
-  else
-    _ = call("browser.close", {}, b, wait = quitTime)
   end
-  quiet = result.IsOk(fiber.Wait(fx.Output, timeout = quitTime))
+  quiet = result.IsOk(fiber.Wait(fx.Output, timeout = wait))
+  if not quiet and not stopped
+    sys.Stop(fx.Proc)
+    stopped = true
+    quiet = result.IsOk(fiber.Wait(fx.Output, timeout = quitTime))
+  end
+  if not quiet
+    fiber.Cancel(fx.Output)
+    _ = fiber.Wait(fx.Output)
+  end
   exit = fiber.Spawn(() -> sys.WaitExit(fx.Proc))
-  ended = fiber.Wait(exit, timeout = if quiet 1 else 0.1 end)
-  if result.IsErr(ended)
+  ended = fiber.Wait(exit, timeout = if stopped quitTime else 1 end)
+  if result.IsErr(ended) and not stopped
     sys.Stop(fx.Proc)
     stopped = true
     ended = fiber.Wait(exit, timeout = quitTime)
@@ -309,7 +406,7 @@ defn quit(b, fx)
     hangUp(b)
   end
   if result.IsErr(ended)
-    return result.Err({Kind: "browser", Message: "Firefox still runs $(2 * quitTime) seconds after it was closed, and after a TERM signal."})
+    return result.Err({Kind: "browser", Message: "Firefox still runs $quitTime seconds after a TERM signal, once closed."})
   end
   result.Ok(if stopped missing else ended.Value end)
 end

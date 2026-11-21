@@ -5,7 +5,8 @@ name: pages
 # book uses the package as a program does, use deps/www-celestial/ceti/src/browser, which cesia doc --site reads from the
 # project itself since Cesia 1.2. A block of the book that doesn't check, a [Name] that leads nowhere, or a French page that
 # drifts from its English one stops the build, and the site in place stays as it was. Until Cesia has a nightly release,
-# there is nothing to build with, and the build says so.
+# there is nothing to build with, and the build says so; any other failure of its download, as an error of the API, stops
+# the build, so that a pull request that breaks the book never shows green.
 on:
   push:
     branches: [main]
@@ -33,10 +34,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           archive=cesia-linux-x86_64.tar.gz
-          if ! gh release download nightly --repo www-celestial/cesia-lang --pattern "$archive*" --dir download; then
-            echo "Cesia has no nightly release yet: nothing to build the site with."
-            echo "NO_CESIA=1" >> "$GITHUB_ENV"
-            exit 0
+          if ! gh release download nightly --repo www-celestial/cesia-lang --pattern "$archive*" --dir download 2> "$RUNNER_TEMP/download.err"; then
+            cat "$RUNNER_TEMP/download.err" >&2
+            if grep -q "release not found" "$RUNNER_TEMP/download.err"; then
+              echo "Cesia has no nightly release yet: nothing to build the site with."
+              echo "NO_CESIA=1" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "::error::The download of the nightly Cesia failed: the site is neither built nor checked."
+            exit 1
           fi
           (cd download && [ "$(sha256sum "$archive" | cut -d' ' -f1)" = "$(cut -d' ' -f1 < "$archive.sha256")" ])
           mkdir -p "$HOME/.cesia"

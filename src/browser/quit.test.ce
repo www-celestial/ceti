@@ -1,0 +1,30 @@
+(* How Ceti closes a Firefox that is slow to end, with the two scripts of tests/ that stand for one: no Firefox of the
+   tests' own, but for the slow first start. *)
+use std/fiber
+use std/list
+use std/result
+use std/sys
+use std/test
+use std/text
+use std/value
+
+defn isQuitStopsReadingFirst()
+  (** A Firefox whose output runs on after the TERM signal, through a process that it started, is closed, and the fiber
+      that reads its output stops before Ceti takes its exit: it read on before, and stopped with the panic "This
+      process has ended.", as the exit of a process ends its output. *)
+  fx = launch("tests/noisy-firefox.sh", true, test.Temp())?
+  ended = quit(missing, fx)
+  read = fiber.Wait(fx.Output)
+  list.All([result.IsOk(ended), result.IsErr(read) and read.Error.Kind == "cancelled"])
+end
+
+defn isSlowFirstStartKeepsItsTemplate()
+  (** A first start whose Firefox takes 6 seconds more to end once closed, as on a loaded machine, keeps its template:
+      it had 5 seconds, then the TERM signal, which keeps none, so that the run gave an Err. The folder given to
+      Firefox, and the one above it, which weren't there, are made 0700. *)
+  above = "$(test.Temp())/new"
+  dir = "$above/firefox"
+  out = Firefox(b -> result.Ok("ran"), dir, program = "tests/slow-firefox.sh")
+  made = [name for name in sys.List(dir)? if text.StartsWith("template-", name)]
+  list.All([value.Equal(out, result.Ok("ran")), value.Len(made) == 1, sys.Stat(above)?.Mode == 448, sys.Stat(dir)?.Mode == 448])
+end

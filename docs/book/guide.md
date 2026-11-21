@@ -34,7 +34,7 @@ Five things happen, in this order:
 3. Ceti opens the WebSocket of BiDi, `ws://127.0.0.1:PORT/session`, and the session (`session.new`); it connects to no
    address but `127.0.0.1`. Prompts such as `alert` and `confirm` are dismissed as they open, since no person is there
    to answer them: `confirm` gives `false`. Downloads are refused: without it, a headless Firefox saves what a page
-   downloads in the user's download folder, where the program never allowed a write.
+   downloads in the user's download folder, where the program has no `write=`.
 4. `title(b)` runs, in a fiber of its own.
 5. Whatever `title` gave, an `Ok`, an `Err`, or a panic, Ceti closes Firefox (`browser.close`), waits until it has ended,
    removes the profile, and gives what `title` gave, or panics again if `title` panicked.
@@ -71,8 +71,8 @@ it, and the other removes its own. A copy never meets a template half made.
 
 The folder can be removed whenever no Firefox runs from it: the next start makes the template again. Beside the
 template, a `profile-` folder is the profile of a Firefox that runs, and a `build-` folder a template being made; one
-that stays after Firefox has ended comes from a Firefox that was killed with `kill -9`, or from a power cut, and can be
-removed.
+that stays after Firefox has ended comes from a program that a stop signal ended (see No Firefox left behind), from a
+`kill -9`, or from a power cut, and can be removed.
 
 ### Permissions
 
@@ -87,12 +87,42 @@ A Cesia program touches nothing outside itself unless its command line allows it
 `net=127.0.0.1` opens every port of this machine to the program: a narrower permission would need a new kind of
 permission in Cesia, for the ports of the programs it started.
 
-Two more, for some functions only: `read=` for the files that `browser.Upload` gives a page, and `write=` for the path
-where `browser.Download` saves a file.
+Three more, for some functions only: `read=` for a local file that `browser.Go` opens, `read=` for the files that
+`browser.Upload` gives a page, and `write=` for the path where `browser.Download` saves a file.
 
-**Private folders.** Cesia makes folders that others on the machine can read (0755) and files they can read (0644),
-and a profile holds the cookies and the storage of its pages while Firefox runs. Keep the folder given to `Firefox`
-under a home that is yours alone, as most systems make it (0700).
+**`exec=firefox` is total trust**, as `ffi=` is. Cesia's `exec=` names a program, not its arguments: a program that may
+start Firefox may start it itself, with any arguments, and drive it over `net=127.0.0.1` as Ceti does. That Firefox
+reads and writes every file the user may, as `firefox --screenshot PATH` writes an image at `PATH` or a download goes to
+any folder, and reaches every host, past `net=`. So `read=` and `write=` don't confine a program that has
+`exec=firefox`: give it only to a program you trust as yourself. What Ceti's own functions keep is narrower: they never
+make Firefox read or write, for the program, a file that its permissions don't name. `Go` asks for `read=` of a local
+file (see Pages), `Upload` for `read=` of each file it gives (see Forms), and `Download` saves only at a path of
+`write=` (see Downloads). That guards a program that passes on a URL or a path it didn't write itself, as a crawler
+that follows links; it doesn't hold back a program that means harm.
+
+**Private folders.** A profile holds the cookies and the storage of its pages while Firefox runs, so Ceti makes the
+template, each profile and the folder where a download waits yours alone, with Cesia's `private = true`: folders 0700,
+which no one else on the machine can list or enter, and the files it copies or writes 0600. The folder given to
+`Firefox` is made 0700 too when it isn't there. One that is there keeps its mode, as you chose it, but it must be
+yours, and no one else may write in it: else, or when a template in it belongs to someone else, `Firefox` gives an
+`Err` of the kind `"browser"`, since a template that someone else put there would steer every Firefox started from it,
+as a proxy in its preferences. So a folder shared with others is refused, `/tmp` itself too, sticky bit and all: give
+`Firefox` a folder of your own, as `.cesia/firefox`.
+
+**What Firefox keeps in the home.** The profile holds what a run does, and goes with it. Firefox also writes a few
+things in the home of the user, `$HOME`, outside `write=`, which Ceti can't send elsewhere:
+
+- the folders `~/Downloads`, which it makes empty at its start, `~/.config/mozilla/firefox`, with `Crash Reports` and
+  `Pending Pings`, and `~/.cache/mozilla`;
+- the caches of the libraries it uses: the fonts in `~/.cache/fontconfig`, the shaders in `~/.cache/mesa_shader_cache`;
+- for each file that `Download` saves, the address it came from, in the metadata that GIO keeps of files,
+  `~/.local/share/gvfs-metadata`, under the path that the file had in the profile: Firefox writes it on Linux whatever
+  its preferences say.
+
+No download goes into the desktop's list of recent files, `~/.local/share/recently-used.xbel`: Ceti sets
+`browser.download.manager.addToRecentDocs` to false in each profile. A program that must leave nothing in the home runs
+with `HOME` set to a folder of its own, as `HOME=/tmp/run cesia run main.ce`: Firefox gets the environment of the
+program that starts it.
 
 ## Pages
 
@@ -120,6 +150,21 @@ browser, so a program needs it only when it opens many pages.
 
 `browser.Go` goes to a URL and waits for its `load` event, the moment when the page and its images, styles and scripts
 have loaded. An address that can't be reached is an `Err` of the kind `"browser"`.
+
+**What Go may read.** Firefox reads the files of this machine itself, outside Cesia's sandbox, so `Go` first asks Cesia
+for the file that a `file:` URL names, or a `view-source:` or `jar:` URL of one, with `sys.Stat`: the program needs
+`read=` for it, as `sys.Read` does, and without it the program stops with Cesia's message. Ceti reads the URL as
+Firefox does: its scheme in any case, its tabs and line ends dropped, `localhost` as its host, its `%XX` decoded and its
+`.` and `..` taken away. A `file:` URL in another form, as one that names another host or writes a dot, a slash or a
+backslash in `%XX`, is an `Err` of the kind `"browser"`: Ceti takes the plain form, `file:///home/ana/page.html`.
+
+A local page is an origin of its own, as in a Firefox that no program drives: its scripts read no other file of the
+machine (Ceti sets `security.fileuri.strict_origin_policy` in each profile, which WebDriver BiDi turns off). A page of
+`http:` or `https:` leads Firefox to no file at all: Firefox refuses its links, its frames and its scripts to `file:`.
+What `Go` checks is the URL it is given, not where a local page leads: a local page that the program opens may still
+show another file of the machine, in a frame, or after a link that the program clicks or a script that it runs with
+`Eval`, and `Text` or `Screenshot` then read it. Open local pages only from folders that hold no such page, or serve
+them over `http:` from `127.0.0.1`, as the tests of Ceti do.
 
 ### The state of a session
 
@@ -417,6 +462,9 @@ end
 **What Upload may read.** Firefox reads the files itself, outside Cesia's sandbox, so Ceti first asks Cesia for each one
 with `sys.Stat`: the program needs `read=` for it, and Cesia follows links, so a link can't lead out of the folders that
 `read=` allows; without it, the program stops with Cesia's message, as for any read. Only regular files are taken.
+That is what Upload keeps: it gives Firefox no file that the program may not read, whatever path it is handed. It is no
+fence around the program, which has `exec=firefox` (see Permissions), and the page gets what each file holds, as a
+site gets what a person uploads to it.
 Firefox needs absolute paths, and Cesia gives no current folder, so Ceti learns it from Firefox: the absolute path of the
 profile, less the relative one Ceti gave it. A relative path is so taken from the current folder when the folder given to
 `browser.Firefox` is relative, as `.cesia/firefox`; with an absolute one, as `test.Temp()`, give absolute paths.
@@ -594,7 +642,7 @@ end
 ### Downloads
 
 A page's downloads are refused, all of them: without that, a headless Firefox saves what a page downloads in the
-user's download folder, where the program never allowed a write. `browser.Download(action, to, p)` runs `action()` and
+user's download folder, where the program has no `write=`. `browser.Download(action, to, p)` runs `action()` and
 saves at the path `to` the file that a page of `p`'s user context downloads meanwhile, once it is complete:
 
 ```cesia norun
@@ -608,6 +656,11 @@ It gives `{Url, Name}`. The page chooses nothing of where the file lands: during
 folder of the profile only, then Ceti moves the file to `to` with `sys.Rename`, which needs `write=` for it; to another
 disk than the profile's, it copies the file through the memory, up to 256 MiB. No download that ends within `timeout`
 seconds after the action is an `Err` of the kind `"timeout"`, a download that failed one of the kind `"browser"`.
+
+That is what Ceti keeps: a page that Ceti drives saves no file where the program has no `write=`, neither by a
+download that no `Download` waits for nor by the name it gives its file, and the file it saves lands at `to` alone. It
+doesn't keep the program itself out of a folder, since `exec=firefox` lets it drive a Firefox of its own (see
+Permissions), nor does it look at what the file holds: a page chooses that.
 
 ## Screenshots and PDF
 
@@ -626,7 +679,10 @@ defaults of BiDi. Firefox takes about 2.6 s to print a page, the first time and 
 
 Firefox sends the image in Base64, a way to write bytes as letters; Cesia decodes it in OCaml, about 0.1 ms for a
 screenshot of 19 KB. A message of Firefox holds at most 64 MiB, the `DefaultMaxMessage` of `std/websocket`, so a
-screenshot or a PDF holds at most 48 MiB: past it, the connection closes, and the browser is `"closed"`.
+screenshot or a PDF holds at most 48 MiB. Past it, the connection ends, as a WebSocket can't skip a message, and so does
+the session: each step after it gives an `Err` of the kind `"closed"` that says a message passed 64 MiB, and Firefox is
+closed with the TERM signal. A page can do it too, with a line of that size in its console, which Firefox sends whole
+(`Console` keeps 16 KiB of each). Ceti reads no larger message, so that no page can make the program hold more.
 
 ## Errors
 
@@ -637,7 +693,7 @@ Errors are values: each function gives an `Ok`, or an `Err` of `{Kind, Message}`
 | `"timeout"` | a wait found no element before its time was over, a page didn't load in time, or Firefox gave no answer in time |
 | `"browser"` | Firefox refused a command: the `Err` has the `Code` of BiDi, as `no such frame` or `unknown error`, and its `Message` |
 | `"script"` | `Eval` met an exception, or a value that JSON can't write |
-| `"closed"` | the browser has gone: it crashed, or `Firefox` has given its answer already |
+| `"closed"` | the browser has gone: it crashed, `Firefox` has given its answer already, or a message of Firefox passed 64 MiB, which ended the session; the `Message` says which |
 
 A command that doesn't wait on the page, as `Screenshot`, has 30 seconds: past them, Firefox is taken for stuck, and the
 command gives an `Err` of the kind `"timeout"`.
@@ -704,14 +760,35 @@ for each start that it spares.
 ## No Firefox left behind
 
 A headless Firefox with one page takes about 0.4 GB of memory (one measure). `browser.Firefox` closes it in every case while the program runs:
-after an `Ok`, an `Err` or a panic of the function, and when the fiber that called it is stopped by `fiber.Cancel`, as
-it runs in a fiber of its own. It waits until Firefox and the processes it started have ended, then removes the profile.
-If Firefox still runs 5 seconds after it was closed, it gets the TERM signal, and 5 seconds more; then `Firefox` gives
-an `Err` of the kind `"browser"`.
+after an `Ok`, an `Err` or a panic of the function, and when the fiber that called it is stopped by `fiber.Cancel`. It
+waits until Firefox and the processes it started have ended, then removes the profile. If Firefox still runs 5 seconds
+after it was closed, it gets the TERM signal, and 5 seconds more; then `Firefox` gives an `Err` of the kind
+`"browser"`. The first start in a folder has 30 seconds rather than 5, as a Firefox that a loaded machine slows would
+else end by the TERM signal, and a template must come from a Firefox that ended by itself.
+
+**A cancelled caller.** `Firefox` runs in a fiber of its own, which nothing else stops, as `sql.Transaction` does, and
+its caller says four times a second that it still waits. When `fiber.Cancel` stops the caller, that fiber hears nothing
+more: about 1.5 s later it cancels the function, at its next wait, then closes Firefox and removes the profile as after
+any end; in all, about 3 s after the cancel. A late word, as when a long computation held the program, cancels nothing:
+the fiber takes the caller for stopped only after two waits in a row without one. This holds while the program runs: a
+program that ends just after the cancel ends without it, since Cesia ends a program when its own code ends, its other
+fibers with it, and stops no program that it started then. Firefox then runs on, and its profile stays. A program that
+must end at once tells its function to end, by a channel that the function listens to, and waits for `Firefox`, rather
+than cancel it.
 
 A test that runs past its time is stopped by `cesia test`, which ends at the end of each test the programs it started:
-the TERM signal, and KILL a second later. Ctrl-C and TERM reach Firefox too. A `kill -9` of the Cesia program itself
-leaves Firefox running: nothing can run after it.
+the TERM signal, and KILL a second later. A `kill -9` of the Cesia program itself leaves Firefox running: nothing can
+run after it.
+
+A stop signal reaches Firefox too: Cesia passes TERM on to the programs it started, and a terminal sends Ctrl-C (INT) to
+all of them. Firefox ends; what becomes of its profile depends on the program:
+
+- **A program that doesn't take the stop signals**, as most scripts, ends at once, as Cesia ends it at the first one.
+  The profile stays in the folder, as nothing of the program runs after the signal to remove it. It is yours alone
+  (see Private folders, under Permissions), and can be removed.
+- **A program that takes them**, by `sys.Stops` as a server does, goes on: the function gets an `Err` of the kind
+  `"closed"` at its next step, as Firefox has ended, and `Firefox` removes the profile before it gives back what the
+  function gave. A second signal ends any program at once, and its profile stays.
 
 ## Not yet
 
