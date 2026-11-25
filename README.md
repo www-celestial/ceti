@@ -8,6 +8,11 @@ Selenium do. It speaks
 and the browser sends answers back on one WebSocket connection. Firefox serves BiDi itself, so Ceti needs nothing
 but Firefox and Cesia 1.2, and no Node, no driver program, no download of a browser.
 
+**Documentation: https://www-celestial.github.io/ceti/** (in French: https://www-celestial.github.io/ceti/fr/)
+
+The family: [Cesia](https://www-celestial.github.io/cesia-lang/) (the language) · [Cemacs](https://www-celestial.github.io/cemacs/) (the editor) ·
+[Cepheus](https://www-celestial.github.io/cepheus/) (the database) · [Ceti](https://www-celestial.github.io/ceti/) (the browser driver).
+
 ```cesia
 use deps/www-celestial/ceti/src/browser
 use std/sys

@@ -9,6 +9,11 @@ programme envoie des commandes et que le navigateur renvoie des réponses sur un
 qui reste ouverte, où les messages vont dans les deux sens). Firefox sert BiDi lui-même, si bien que Ceti n'a besoin que
 de Firefox et de Cesia 1.2, et ni de Node, ni d'un programme pilote (driver), ni du téléchargement d'un navigateur.
 
+**Documentation : https://www-celestial.github.io/ceti/fr/** (en anglais : https://www-celestial.github.io/ceti/)
+
+La famille : [Cesia](https://www-celestial.github.io/cesia-lang/fr/) (le langage) · [Cemacs](https://www-celestial.github.io/cemacs/fr/) (l'éditeur) ·
+[Cepheus](https://www-celestial.github.io/cepheus/fr/) (la base de données) · [Ceti](https://www-celestial.github.io/ceti/fr/) (le pilote de navigateur).
+
 ```cesia
 use deps/www-celestial/ceti/src/browser
 use std/sys
