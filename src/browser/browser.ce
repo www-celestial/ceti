@@ -359,7 +359,7 @@ defn connect(url, profile, slow = 0)
       navigation under way in each browsing context, for the steps that wait for its document. Downloads are refused:
       without it, Firefox would save a page's download in the user's download folder, where the program has no
       write=. *)
-  s = open("$url/session")?
+  s = open("$url/session", slow = slow)?
   caps = {alwaysMatch: {unhandledPromptBehavior: {default: "ignore"}}}
   started = call("session.new", {capabilities: caps}, s)
   heard = if result.IsOk(started) call("session.subscribe", {events: list.Concat(["browsingContext.userPromptOpened", "log.entryAdded"], navigationEvents)}, s) else started end

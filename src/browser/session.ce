@@ -40,7 +40,11 @@ maxMessage = websocket.DefaultMaxMessage
 tooBig = failure("closed", "Firefox sent a message of more than $(math.Div(maxMessage, 1048576)) MiB, the most Ceti reads, which ended the session: a page does it with a line of that size in its console, or a screenshot, a PDF or a value of Eval that large. Firefox ran on, and closes with the browser.")
 
 defn whyEnded(s)
-  (** Why a session has ended, once its dispatcher has said it: tooBig, or lost() for a Firefox that has closed. *)
+  (** Why a session has ended, once its dispatcher has said it: tooBig, or lost() for a Firefox that has closed, as for
+      the dispatcher's own session, which has no dispatcher to ask. *)
+  if value.IsMissing(s.dispatcher)
+    return lost()
+  end
   why = fiber.Wait(s.dispatcher, timeout = 0)
   if result.IsOk(why) and failed(why.Value) why.Value else lost() end
 end
@@ -55,23 +59,25 @@ end
 consoleEntries = 1000
 entryLength = 16384
 
-defn open(url)
-  (** Connects to the BiDi server of Firefox at url and starts its dispatcher: an Ok of a session, or an Err. *)
+defn open(url, slow = 0)
+  (** Connects to the BiDi server of Firefox at url and starts its dispatcher, whose actions wait slow seconds first:
+      an Ok of a session, or an Err. *)
   c = websocket.Dial(url, maxMessage = maxMessage)?
   requests = fiber.Channel()
   gone = fiber.Channel()
-  result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone)), missing, missing, 0))
+  result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone, slow)), missing, missing, slow))
 end
 
 defn call(method, params, s, wait = answerTime)
   (** Sends a command and waits for its answer, at most wait seconds: an Ok of its result, an Err of the kind "browser"
       with the error's Code and Message, of the kind "closed" once the connection has ended, or of the kind "timeout".
-      A command that acts on a page waits the session's slow seconds first. *)
-  if isClosed(s.gone)
-    return whyEnded(s)
-  end
+      A command that acts on a page waits the session's slow seconds first, so that one whose session ended meanwhile
+      says so at once. *)
   if s.slow > 0 and method in acting
     sys.Sleep(s.slow)
+  end
+  if isClosed(s.gone)
+    return whyEnded(s)
   end
   reply = fiber.Channel(size = 1)
   fiber.Send({Method: method, Params: params, Reply: reply}, s.requests)
@@ -133,16 +139,20 @@ defn hangUp(s)
   _ = fiber.Wait(s.dispatcher)
 end
 
-defn dispatch(c, requests, gone)
+defn dispatch(c, requests, gone, slow)
   (** The fiber that owns the connection, until it ends or a Stop comes. A request gets the next id and is written; an
       answer goes to the request of its id, as an Ok of its result or an Err; an event goes to the watches that take it.
-      A prompt that no watch takes is dismissed, and the console's entries are kept for each user context. It follows
-      the navigation under way in each browsing context, holds each Settle until that navigation has ended, and ends
-      the subscription of each Disarm once the navigation of its context has its document or has ended, or at once when
-      none is under way. At the end, the requests that wait get an Err of the kind "closed", as do those that come
-      after, which says why: tooBig when a message of Firefox passed maxMessage. It gives that Err, which whyEnded
-      reads, or lost() after a Stop. *)
-  s = {requests: requests, gone: gone}
+      A prompt that no watch takes is dismissed, after slow seconds as any action, and the console's entries are kept
+      for each user context. It follows the navigation under way in each browsing context, holds each Settle until that
+      navigation has ended, and ends the subscription of each Disarm once the navigation of its context has its
+      document or has ended, or at once when none is under way. At the end, the requests that wait get an Err of the
+      kind "closed", as do those that come after, which says why: tooBig when a message of Firefox passed maxMessage.
+      It gives that Err, which whyEnded reads, or lost() after a Stop. *)
+  (* The dispatcher's own session: the commands it gives itself, a prompt to dismiss, a request to let through, a
+     subscription to end, go through call from fibers of their own, since it reads the requests. A session, not a
+     dictionary that stands for one: a dictionary that lacked a field call reads, as slow, made each of them panic in
+     its fiber, unseen, and a prompt stayed open, which held the action that opened it. *)
+  s = session(requests, gone, missing, missing, missing, missing, slow)
   waiting = dict.Dict()
   watches = dict.Dict()
   logs = dict.Dict()

@@ -577,8 +577,9 @@ action, 5 by default. The action's own `Err` comes back as it is.
 ### Dialogs
 
 Firefox tells Ceti of each dialog of a page: `alert`, `confirm`, `prompt`, and the question that `beforeunload` asks
-before a page is left. One that no function waits for is dismissed at once, since no person is there to answer it: an
-`alert` closes, a `confirm` gives `false`, a `prompt` gives `null`, and the page stays when `beforeunload` asks.
+before a page is left. One that no function waits for is dismissed at once, or after `slow` seconds in a run you
+watch, since no person is there to answer it: an `alert` closes, a `confirm` gives `false`, a `prompt` gives `null`,
+and the page stays when `beforeunload` asks.
 
 `browser.Dialog(answer, action, p)` answers the first dialog of `p`, its frames, tabs and popups, that opens during
 `action()`: `true` accepts it, `false` dismisses it, a text accepts a `prompt` with that text. It gives `{Type, Message,

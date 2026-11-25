@@ -49,3 +49,24 @@ defn isSlowWaitsBeforeAnActionOnly()
   end, kept, slow = 0.4)
   result.IsOk(out) and out.Value.Click >= 0.4 and out.Value.Read < 0.4
 end
+
+defn isSlowWaitsBeforeADismissedDialog()
+  (** With slow = 0.3, a click that opens an alert that no Dialog waits for answers once the alert is dismissed, after
+      at least 0.6 seconds: Ceti waits before the click, then before it dismisses the alert, as before any answer to a
+      dialog, and the page runs on. The dispatcher dismisses such a prompt itself; it once did it from a fiber that
+      panicked unseen, and the click never answered. The wait for the click is bounded here, so that such a fault fails
+      the test in 10 seconds, with Firefox closed and its profile removed, rather than past the test's own time. *)
+  url = "$(site()?)/alert.html"
+  out = Firefox(defn (b)
+    p = NewPage(b)?
+    Go(url, p)?
+    t0 = sys.Now()
+    clicked = fiber.Wait(fiber.Spawn(() -> Click("#alert", p)), timeout = 10)
+    if not value.Equal(clicked, result.Ok(result.Ok(missing)))
+      return result.Err("the click on #alert gave $clicked")
+    end
+    took = sys.Now() - t0
+    result.Ok({Took: took, Said: Text("#said", p)?})
+  end, kept, slow = 0.3)
+  result.IsOk(out) and out.Value.Took >= 0.6 and out.Value.Said == "after the alert"
+end

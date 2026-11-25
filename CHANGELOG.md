@@ -13,6 +13,9 @@ Firefox serves itself: no Node, no driver program, no download of a browser.
 - `browser.Firefox(f, dir, slow = 0.5)` waits that many seconds (0 to 60) before each action on a page, a navigation, a
   click, a key, a file, a dialog's answer, and never before a step that only reads, as Playwright's `slowMo`.
 - `devtools = true` opens Firefox's developer tools in its window; it needs `headless = false`.
+- A dialog that no `Dialog` waits for is dismissed again, after `slow` seconds in a watched run: since `slow =` came,
+  the dispatcher's own commands, the dismissal of such a dialog, a request let through and the end of a subscription,
+  panicked unseen, so a click that opened an `alert` or a `confirm` never answered.
 
 ### Pages
 

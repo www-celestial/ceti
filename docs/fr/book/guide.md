@@ -565,8 +565,8 @@ tel quel.
 
 Firefox signale à Ceti chaque dialogue (une petite fenêtre de question) d'une page : `alert`, `confirm`, `prompt`, et la
 question que `beforeunload` pose avant qu'une page soit quittée. Un dialogue qu'aucune fonction n'attend est écarté
-aussitôt, puisque personne n'est là pour y répondre : un `alert` se ferme, un `confirm` donne `false`, un `prompt` donne
-`null`, et la page reste quand `beforeunload` demande.
+aussitôt, ou après `slow` secondes dans un lancement que vous regardez, puisque personne n'est là pour y répondre : un
+`alert` se ferme, un `confirm` donne `false`, un `prompt` donne `null`, et la page reste quand `beforeunload` demande.
 
 `browser.Dialog(answer, action, p)` répond au premier dialogue de `p`, de ses frames, de ses tabs et de ses popups, qui
 s'ouvre pendant `action()` : `true` l'accepte, `false` l'écarte, un texte accepte un `prompt` avec ce texte. Il donne
