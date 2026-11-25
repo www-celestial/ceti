@@ -11,8 +11,8 @@ de Firefox et de Cesia 1.2, et ni de Node, ni d'un programme pilote (driver), ni
 
 **Documentation : https://www-celestial.github.io/ceti/fr/** (en anglais : https://www-celestial.github.io/ceti/)
 
-La famille : [Cesia](https://www-celestial.github.io/cesia-lang/fr/) (le langage) · [Cemacs](https://www-celestial.github.io/cemacs/fr/) (l'éditeur) ·
-[Cepheus](https://www-celestial.github.io/cepheus/fr/) (la base de données) · [Ceti](https://www-celestial.github.io/ceti/fr/) (le pilote de navigateur).
+La famille : [Cesia](https://www-celestial.github.io/cesia-lang/) (le langage) · [Cemacs](https://www-celestial.github.io/cemacs/) (l'éditeur) ·
+[Cepheus](https://www-celestial.github.io/cepheus/) (la base de données) · [Ceti](https://www-celestial.github.io/ceti/) (le pilote de navigateur).
 
 ```cesia
 use deps/www-celestial/ceti/src/browser
