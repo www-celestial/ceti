@@ -1,7 +1,8 @@
 (* Headless Firefox against the pages of tests/pages, which each test serves itself on a free port. The tests start
    Firefox in the kept folder .cesia/firefox, where the first start makes the template of this version of Firefox; they
-   run one after the other, so each one can check that its profile went. A test that needs several scenarios runs them
-   on one browser, each on its page, since a start of Firefox takes about a second. *)
+   run one after the other, so each one can check that its profile went, once it has removed, with fresh, what a run
+   past its time left. A test that needs several scenarios runs them on one browser, each on its page, since a start of
+   Firefox takes about a second. *)
 use src/browser
 use std/bug
 use std/cesia
@@ -34,8 +35,23 @@ defn others(dir)
   result.Ok([name for name in sys.List(dir)? if text.StartsWith("profile-", name) or text.StartsWith("build-", name)])
 end
 
+defn fresh()
+  (** Removes from the kept folder the profiles and the templates being made that an earlier run left there. As the
+      tests of this file run one after the other, only a run that ended without its cleanup leaves one: a test past its
+      time, whose fibers cesia test drops and whose Firefox it stops, or a program that was killed. Each test that
+      starts Firefox in the kept folder calls it first, so that it counts its own profiles only, and a test that ran
+      past its time leaves no profile that the next ones would count. *)
+  if sys.Exists(kept)
+    for name in others(kept)?
+      sys.RemoveTree("$kept/$name")?
+    end
+  end
+  result.Ok(missing)
+end
+
 defn on(page, f)
   (** f(p, site) on a new page at tests/pages/page, in a new Firefox, then the kept folder holds its template only. *)
+  fresh()?
   site = served()?
   out = browser.Firefox(defn (b)
     p = browser.NewPage(b)?
@@ -164,6 +180,7 @@ defn isNavigationWaited()
       the next step on that page. A click that loads nothing, or a navigation that brings no document, an answer 204,
       a download or a stop, holds nothing, nor does a Go to an answer 204, which fails; one that doesn't load in time
       is a timeout that names it. *)
+  fresh()?
   posts = fiber.Channel(size = 16)
   site = navSite(posts)?
   here = "document.getElementById('here').textContent"
@@ -255,6 +272,7 @@ defn isScreenshot()
 end
 
 defn isPagesApart()
+  fresh()?
   site = served()?
   browser.Firefox(defn (b)
     pages = [browser.NewPage(b)? for k in 1..3]
@@ -277,6 +295,7 @@ defn slowly()
 end
 
 defn isErrors()
+  fresh()?
   l = net.Listen(0)?
   fiber.Spawn(() -> http.Serve(http.App() then http.Get("/slow", r -> slowly()), listener = l))
   slow = "http://127.0.0.1:$(net.Port(l))/slow"
@@ -301,6 +320,7 @@ defn isFileUrlsKeepRead()
       Firefox does, another host or %XX of a dot or a slash, is an Err; a file the program may read opens, in any of
       those ways. Firefox reads every one of them, so a Go that only passed the URL on read the file. The local page
       that opened is an origin of its own: a script of it can't fetch another file, which WebDriver BiDi lets it do. *)
+  fresh()?
   page = path.Abs("tests/pages/form.html")
   secret = "/etc/passwd"
   denied = ["file://$secret", "FILE://$secret", " file://$secret", "fi\tle://$secret", "file://localhost$secret", "file:$secret", "file:///tmp/..$secret", "view-source:file://$secret", "jar:file://$secret!/x"]
@@ -329,6 +349,7 @@ defn isProfilesPrivate()
       that Ceti copies or writes in a profile 0600, as Firefox makes its keys and its certificates: no one else on the
       machine reads the cookies or the storage of a page while Firefox runs. They were 0755 and 0644, key4.db and
       cert9.db too. The folder given to Firefox keeps the mode it had: see isExistingFolderKeepsItsMode. *)
+  fresh()?
   site = served()?
   alone = 448   (* 0700 *)
   own = 384   (* 0600 *)
@@ -373,6 +394,7 @@ defn isExistingFolderKeepsItsMode()
 end
 
 defn isPanicCloses()
+  fresh()?
   message = panicOf(() -> browser.Firefox(b -> bug.Panic("on purpose"), kept))
   text.Contains("on purpose", message) and value.Len(others(kept)?) == 0
 end
@@ -381,6 +403,7 @@ defn isDownloadsNotInRecentFiles()
   (** Each profile keeps the downloads out of the desktop's list of recent files, ~/.local/share/recently-used.xbel,
       which Firefox writes outside write=, and where it put the path and the name of each download before. The test
       reads the preference, as the home of the user is no part of the test's rights. *)
+  fresh()?
   browser.Firefox(defn (b)
     prefs = sys.Read("$kept/$(others(kept)?[1])/user.js")?
     text.Contains("user_pref(\"browser.download.manager.addToRecentDocs\", false);", prefs)
@@ -409,6 +432,7 @@ defn isCancelCloses()
   (** A caller that fiber.Cancel stops leaves no Firefox and no profile behind, while the program runs: f is cancelled,
       then Firefox is closed and its profile removed within a few seconds. f ran on before, and Firefox with it, for as
       long as f wanted, and for good when the program ended meanwhile. *)
+  fresh()?
   ready = fiber.Channel()
   went = fiber.Channel()
   t = fiber.Spawn(() -> browser.Firefox(defn (b)
@@ -428,7 +452,18 @@ defn isCancelCloses()
 end
 
 defn isErrGivenBack()
+  fresh()?
   value.Equal(browser.Firefox(b -> result.Err("mine"), kept), result.Err("mine")) and value.Len(others(kept)?) == 0
+end
+
+defn isLeftProfileGoes()
+  (** A profile that a run past its time left in the kept folder, as cesia test drops the fibers of such a run and stops
+      its Firefox before Ceti removes it, goes at the next test, which counts its own profile only and passes: a test
+      that ran past its time once made each later one of this file fail, its profile still there. *)
+  sys.Mkdir("$kept/profile-1", private = true)?
+  sys.Write("$kept/profile-1/prefs.js", "", private = true)?
+  ran = on("form.html", (p, site) -> browser.Text("h1", p)? == "Form")
+  ran == true and not sys.Exists("$kept/profile-1")
 end
 
 (* What a run writes and keeps: a cookie of an hour, localStorage, an IndexedDB database. *)
@@ -469,6 +504,7 @@ defn isRunsForget()
       answers the second fetch. A page can't see what another run kept, as each page has a user context of its own: a
       Ceti that ran on the template itself, or made each run's profile the next template, passes the page checks and
       fails the fingerprints. *)
+  fresh()?
   hits = fiber.Channel(size = 100)
   l = net.Listen(0)?
   fiber.Spawn(() -> http.Serve(http.App() then http.Get("/cached", r -> cached(hits)) then http.Static("/", "tests/pages"), listener = l))

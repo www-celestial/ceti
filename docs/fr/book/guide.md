@@ -113,8 +113,8 @@ du template : le premier le garde, et l'autre supprime le sien. Une copie ne ren
 
 Le dossier peut être supprimé dès qu'aucun Firefox n'en tourne : le démarrage suivant recrée le template. À côté du
 template, un dossier `profile-` est le profil d'un Firefox qui tourne, et un dossier `build-` un template en cours de
-création ; un tel dossier qui reste après la fin de Firefox vient d'un Firefox tué par `kill -9`, ou d'une coupure de
-courant, et peut être supprimé.
+création ; un tel dossier qui reste après la fin de Firefox vient d'un test qui a dépassé son temps, d'un Firefox tué
+par `kill -9`, ou d'une coupure de courant, et peut être supprimé.
 
 ### Les permissions
 
@@ -791,7 +791,10 @@ supprime le profil. Si Firefox tourne encore 5 secondes après avoir été ferm�
 habituelle de se terminer), et 5 secondes de plus ; ensuite `Firefox` donne un `Err` de la sorte `"browser"`.
 
 Un test qui tourne au-delà de son temps est arrêté par `cesia test`, qui termine à la fin de chaque test les programmes
-qu'il a démarrés : le signal TERM, et KILL une seconde plus tard. Ctrl-C et TERM atteignent Firefox aussi. Un `kill -9` du
+qu'il a démarrés : le signal TERM, et KILL une seconde plus tard. Son profil reste dans le dossier, puisque aucun code
+du test ne tourne après son temps pour le supprimer : un test peut supprimer les dossiers `profile-` qu'il y trouve
+avant de démarrer Firefox, quand les tests qui se servent de ce dossier tournent l'un après l'autre, comme ceux de
+Ceti. Ctrl-C et TERM atteignent Firefox aussi. Un `kill -9` du
 programme Cesia lui-même laisse Firefox tourner : rien ne peut tourner après lui.
 
 ## Pas encore

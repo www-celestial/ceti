@@ -16,6 +16,9 @@ Firefox serves itself: no Node, no driver program, no download of a browser.
 - A dialog that no `Dialog` waits for is dismissed again, after `slow` seconds in a watched run: since `slow =` came,
   the dispatcher's own commands, the dismissal of such a dialog, a request let through and the end of a subscription,
   panicked unseen, so a click that opened an `alert` or a `confirm` never answered.
+- Ceti's tests remove, at the start of each test, the profile that a test past its time left in their folder, as
+  `cesia test` drops the fibers of such a test and stops its Firefox before Ceti removes it: that one profile made each
+  later test of the file fail. The guide says it.
 
 ### Pages
 

@@ -106,7 +106,7 @@ it, and the other removes its own. A copy never meets a template half made.
 The folder can be removed whenever no Firefox runs from it: the next start makes the template again. Beside the
 template, a `profile-` folder is the profile of a Firefox that runs, and a `build-` folder a template being made; one
 that stays after Firefox has ended comes from a program that a stop signal ended (see No Firefox left behind), from a
-`kill -9`, or from a power cut, and can be removed.
+test that ran past its time, from a `kill -9`, or from a power cut, and can be removed.
 
 ### Permissions
 
@@ -812,8 +812,10 @@ must end at once tells its function to end, by a channel that the function liste
 than cancel it.
 
 A test that runs past its time is stopped by `cesia test`, which ends at the end of each test the programs it started:
-the TERM signal, and KILL a second later. A `kill -9` of the Cesia program itself leaves Firefox running: nothing can
-run after it.
+the TERM signal, and KILL a second later. Its profile stays in the folder, as no code of the test runs after its time
+to remove it: a test can remove the `profile-` folders it finds there before it starts Firefox, when the tests that use
+that folder run one after the other, as Ceti's own tests do. A `kill -9` of the Cesia program itself leaves Firefox
+running: nothing can run after it.
 
 A stop signal reaches Firefox too: Cesia passes TERM on to the programs it started, and a terminal sends Ctrl-C (INT) to
 all of them. Firefox ends; what becomes of its profile depends on the program:
