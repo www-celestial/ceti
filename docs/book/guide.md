@@ -42,6 +42,40 @@ Five things happen, in this order:
 `headless = false` shows the window, to look at a problem. `program =` names the command of Firefox when it isn't
 `firefox`, as `/Applications/Firefox.app/Contents/MacOS/firefox` on macOS.
 
+### Watching a run
+
+A test that fails in a way you don't understand is easier to read when you see it. Three arguments of `browser.Firefox`
+turn a run into something you can watch:
+
+- `headless = false` shows Firefox's window;
+- `slow = 0.5` waits half a second before each action (a navigation, a click, a key, a file given to a form, the answer to
+  a dialog), and never before a step that only reads the page, so that the waits of the locators keep their pace; any
+  number of seconds from 0 to 60, as Playwright's `slowMo`;
+- `devtools = true` opens Firefox's developer tools in that window, its console and its network panel, from the first
+  page on (it needs `headless = false`: a headless Firefox has nowhere to show them).
+
+Say the sign-up form of your app stops accepting a name, and its test fails at the check of the greeting. Run that test
+alone, watched:
+
+```cesia norun
+use deps/www-celestial/ceti/src/browser
+use std/result
+
+defn isSignUpGreets()
+  browser.Firefox(defn (b)
+    p = browser.NewPage(b)?
+    browser.Go("http://127.0.0.1:8080/signup", p)?
+    browser.Type("#name", "Ada Martin", p)?
+    browser.Click(browser.ByRole("button", name = "Sign up"), p)?
+    result.Ok(browser.Text("#greeting", p)? == "Welcome, Ada Martin")
+  end, ".cesia/firefox", headless = false, slow = 0.5, devtools = true)
+end
+```
+
+The window opens with the developer tools; each step waits half a second, so you see the name typed, the button pressed,
+and in the console the error the page logged when its script refused the name. Once you have seen it, take the three
+arguments away: the same test runs headless and at full speed in `cesia test` and in CI.
+
 ### The template profile
 
 A Firefox that starts on an empty profile spends about a second on work that it does only once for a profile: it

@@ -25,7 +25,7 @@ quitTime = 5
 (* The line of Firefox's output that gives the address of its BiDi server. *)
 listeningOn = "WebDriver BiDi listening on "
 
-defn Firefox(f, dir, headless = true, program = "firefox")
+defn Firefox(f, dir, headless = true, program = "firefox", slow = 0, devtools = false)
   (** Starts Firefox on a new profile in the folder dir, calls f(b) with the browser b, then closes Firefox and removes
       its profile, whatever f gives, an Ok, an Err or a panic: it gives what f gave, or panics again if f panicked. As
       sql.Transaction does, it runs in a fiber of its own, which nothing else stops: when fiber.Cancel stops its caller,
@@ -35,7 +35,11 @@ defn Firefox(f, dir, headless = true, program = "firefox")
       at the first start in dir and again when the version changes, and never changed by a run, so that no run sees what
       another one did. A folder kept between runs, as .cesia/firefox, gets Firefox ready in about 1.0 s instead of
       2.1 s; the first start in it, which makes the template, in about 4.2 s. headless = false shows the window, to look
-      at a problem. program is the command of Firefox, as /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An
+      at a problem; slow = 0.5 then waits half a second before each action (a click, a key, a form's file, a dialog's
+      answer, a navigation), so that a person can follow it, as Playwright's slowMo does, and never before a step that
+      only reads; devtools = true opens Firefox's developer tools in its window, and needs headless = false. An Err of
+      the kind "browser" for a slow that is no number from 0 to 60 seconds, or for devtools = true without a window.
+      program is the command of Firefox, as /Applications/Firefox.app/Contents/MacOS/firefox on macOS. An
       Err of the kind "browser" when Firefox can't start, or doesn't end once closed. It needs exec= for program,
       net=127.0.0.1 for the port Firefox chooses, and read= and write= for dir, where the template and the profiles are
       made and the profiles removed. A dir that isn't there is made its owner's alone (0700), as the template and each
@@ -44,8 +48,14 @@ defn Firefox(f, dir, headless = true, program = "firefox")
       kind "browser". exec= of Firefox is total trust, as ffi= is: the program may start a Firefox of its own, with any
       arguments, which reads and writes every file of the user; Ceti's own functions read and write only what the
       permissions name. *)
+  if not (value.IsInt(slow) or value.IsFloat(slow)) or slow < 0 or slow > 60
+    return result.Err({Kind: "browser", Message: "slow is the seconds to wait before each action, from 0 to 60, not $slow."})
+  end
+  if devtools and headless
+    return result.Err({Kind: "browser", Message: "devtools = true needs headless = false: a headless Firefox has no window to show them in."})
+  end
   alive = fiber.Channel()
-  task = fiber.Spawn(() -> whole(f, dir, headless, program, alive))
+  task = fiber.Spawn(() -> whole(f, dir, headless, program, alive, slow, devtools))
   while true
     (* The caller beats while it waits: a caller that fiber.Cancel stopped beats no more, and whole sees it. *)
     got = fiber.Wait(task, timeout = beat)
@@ -64,16 +74,16 @@ patience = 3
 isPanic(x) = value.IsDict(x) and dict.Has("Panic", x)
 rethrow(out) = if isPanic(out) bug.Panic(out.Panic) else out end
 
-defn whole(f, dir, headless, program, alive)
+defn whole(f, dir, headless, program, alive, slow, devtools)
   (** Firefox(f, dir): what f gave, or a {Panic} of its message; alive is the channel of the caller's beats. *)
   profile = newProfile(dir, program)?
-  started = launch(program, headless, profile)
+  started = launch(program, headless, profile, devtools = devtools)
   if result.IsErr(started)
     _ = removeTree(profile)
     return started
   end
   fx = started.Value
-  opened = connect(fx.Url, profile)
+  opened = connect(fx.Url, profile, slow = slow)
   if result.IsErr(opened)
     _ = quit(missing, fx)
     _ = removeTree(profile)
@@ -272,11 +282,13 @@ defn copyTree(from, to)
   result.Ok(missing)
 end
 
-defn launch(program, headless, profile)
+defn launch(program, headless, profile, devtools = false)
   (** Starts Firefox on the profile and reads its output up to the address of its BiDi server: an Ok of {Proc, Url,
-      Output}, Output the fiber that reads the rest of its output, or an Err once it has stopped. *)
+      Output}, Output the fiber that reads the rest of its output, or an Err once it has stopped. devtools opens the
+      developer tools in its window. *)
   args = ["--remote-debugging-port=0", "--profile", profile, "--no-remote"]
-  proc = sys.Start(program, args = if headless list.Concat(["--headless"], args) else args end)
+  shown = if devtools list.Concat(["--devtools"], args) else args end
+  proc = sys.Start(program, args = if headless list.Concat(["--headless"], shown) else shown end)
   if result.IsErr(proc)
     return result.Err({Kind: "browser", Message: "$program didn't start: $(proc.Error.Message)"})
   end
@@ -340,7 +352,7 @@ defn drained(proc, lines, rest)
   lines
 end
 
-defn connect(url, profile)
+defn connect(url, profile, slow = 0)
   (** Opens the BiDi session of a Firefox on the profile: the WebSocket, session.new, and the tab Firefox opened at its
       start. It asks for the events of the prompts, of the console and of the navigations: the dispatcher dismisses
       each prompt that no Dialog waits for, as no person is there to answer it, keeps the console, and follows the
@@ -358,7 +370,7 @@ defn connect(url, profile)
     return tree
   end
   fiber.Send(tree.Value.contexts[1].context, s.home)
-  result.Ok(session(s.requests, s.gone, s.home, s.dispatcher, profile, hereOf(dict.GetOr("moz:profile", missing, started.Value.capabilities), profile)))
+  result.Ok(session(s.requests, s.gone, s.home, s.dispatcher, profile, hereOf(dict.GetOr("moz:profile", missing, started.Value.capabilities), profile), slow))
 end
 
 defn hereOf(full, profile)

@@ -8,6 +8,12 @@ WebSocket client, and Firefox. Versions below v1.0.0 are experimental: the API m
 Ceti drives Firefox from a Cesia program or test through WebDriver BiDi, the W3C protocol of browser automation, which
 Firefox serves itself: no Node, no driver program, no download of a browser.
 
+### Watching a run
+
+- `browser.Firefox(f, dir, slow = 0.5)` waits that many seconds (0 to 60) before each action on a page, a navigation, a
+  click, a key, a file, a dialog's answer, and never before a step that only reads, as Playwright's `slowMo`.
+- `devtools = true` opens Firefox's developer tools in its window; it needs `headless = false`.
+
 ### Pages
 
 - `browser.Firefox(f, dir)` starts a headless Firefox on a new profile, calls `f`, then closes Firefox and removes the

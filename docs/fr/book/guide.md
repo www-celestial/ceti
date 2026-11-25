@@ -46,6 +46,42 @@ Cinq choses se passent, dans cet ordre :
 `headless = false` montre la fenêtre, pour regarder un problème. `program =` nomme la commande de Firefox quand ce n'est
 pas `firefox`, comme `/Applications/Firefox.app/Contents/MacOS/firefox` sur macOS.
 
+### Regarder un test tourner
+
+Un test qui échoue sans qu'on comprenne pourquoi se lit mieux quand on le voit. Trois arguments de `browser.Firefox`
+font d'une exécution quelque chose qu'on peut suivre des yeux :
+
+- `headless = false` montre la fenêtre de Firefox ;
+- `slow = 0.5` attend une demi-seconde avant chaque action (une navigation, un clic, une touche, un fichier donné à un
+  formulaire, la réponse à un dialogue), et jamais avant une étape qui ne fait que lire la page, pour que les attentes
+  des locators gardent leur rythme ; n'importe quel nombre de secondes de 0 à 60, comme le `slowMo` de Playwright ;
+- `devtools = true` ouvre les outils de développement de Firefox (les *developer tools* : sa console, son panneau du
+  réseau) dans cette fenêtre, dès la première page (il faut `headless = false` : un Firefox sans fenêtre n'a nulle part
+  où les montrer).
+
+Disons que le formulaire d'inscription de votre app n'accepte plus un nom, et que son test échoue au contrôle du message
+d'accueil. Lancez ce test seul, en le regardant :
+
+```cesia norun
+use deps/www-celestial/ceti/src/browser
+use std/result
+
+defn isSignUpGreets()
+  browser.Firefox(defn (b)
+    p = browser.NewPage(b)?
+    browser.Go("http://127.0.0.1:8080/signup", p)?
+    browser.Type("#name", "Ada Martin", p)?
+    browser.Click(browser.ByRole("button", name = "Sign up"), p)?
+    result.Ok(browser.Text("#greeting", p)? == "Welcome, Ada Martin")
+  end, ".cesia/firefox", headless = false, slow = 0.5, devtools = true)
+end
+```
+
+La fenêtre s'ouvre avec les outils de développement ; chaque étape attend une demi-seconde : vous voyez le nom tapé, le
+bouton pressé, et dans la console l'erreur que la page a écrite quand son script a refusé le nom. Une fois que vous
+l'avez vu, retirez les trois arguments : le même test tourne sans fenêtre et à pleine vitesse dans `cesia test` et en
+intégration continue (CI).
+
 ### Le template de profil
 
 Un Firefox qui démarre sur un profil vide passe environ une seconde sur un travail qu'il ne fait qu'une fois par profil :

@@ -1,0 +1,51 @@
+(* Firefox's slow = and devtools =: the wait before each action, so that a person can follow a run in the window, and
+   the checks of both before Firefox starts. The tests that act start a headless Firefox in a kept folder of their own,
+   against tests/pages, which they serve themselves. *)
+use std/fiber
+use std/http
+use std/list
+use std/net
+use std/result
+use std/sys
+use std/value
+
+kept = ".cesia/firefox/slow"
+
+defn site()
+  (** The address of tests/pages, served by this test on a free port. *)
+  l = net.Listen(0)?
+  fiber.Spawn(() -> http.Serve(http.App() then http.Static("/", "tests/pages"), listener = l))
+  result.Ok("http://127.0.0.1:$(net.Port(l))")
+end
+
+(** Is r an Err of the kind "browser"? *)
+isBrowserErr(r) = result.IsErr(r) and r.Error.Kind == "browser"
+
+defn isSlowRefusesWhatIsNoWait()
+  (** A slow below 0, above a minute or that is no number is an Err of the kind "browser", before Firefox starts: f
+      never runs. *)
+  ran = fiber.Channel(size = 3)
+  f = b -> result.Ok(fiber.Send(true, ran))
+  outs = [Firefox(f, kept, slow = -1), Firefox(f, kept, slow = 61), Firefox(f, kept, slow = "fast")]
+  list.All([list.All([isBrowserErr(o) for o in outs]), fiber.Receive(ran, timeout = 0).Error.Kind == "timeout"])
+end
+
+(** devtools = true without a window is an Err of the kind "browser": a headless Firefox has nowhere to show them. *)
+isDevtoolsNeedsAWindow() = isBrowserErr(Firefox(b -> result.Ok(1), kept, devtools = true))
+
+defn isSlowWaitsBeforeAnActionOnly()
+  (** With slow = 0.4, a click on the button of form.html takes at least 0.4 seconds, and reading the text it wrote
+      takes less: Ceti waits before what acts on the page, never before what only reads it. *)
+  url = "$(site()?)/form.html"
+  out = Firefox(defn (b)
+    p = NewPage(b)?
+    Go(url, p)?
+    t0 = sys.Now()
+    Click("#go", p)?
+    t1 = sys.Now()
+    _ = Text("#out", p)?
+    t2 = sys.Now()
+    result.Ok({Click: t1 - t0, Read: t2 - t1})
+  end, kept, slow = 0.4)
+  result.IsOk(out) and out.Value.Click >= 0.4 and out.Value.Read < 0.4
+end

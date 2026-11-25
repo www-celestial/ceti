@@ -10,6 +10,7 @@ use std/dict
 use std/list
 use std/math
 use std/result
+use std/sys
 use std/text
 use std/value
 
@@ -18,9 +19,14 @@ answerTime = 30
 
 (* The connection as the pages use it: requests goes to the dispatcher, gone is closed once the connection has ended,
    home holds, while no page uses it, the tab Firefox opened at its start, beside which the first page opens, profile is
-   the folder of the profile as Ceti gave it to Firefox, and here the current folder, absolute, or missing when Ceti
-   can't tell it. *)
-struct session { requests, gone, home, dispatcher, profile, here }
+   the folder of the profile as Ceti gave it to Firefox, here the current folder, absolute, or missing when Ceti
+   can't tell it, and slow the seconds Ceti waits before each action, so that a person can follow it (0: none). *)
+struct session { requests, gone, home, dispatcher, profile, here, slow }
+
+(* The commands that act on a page, as a person would: Firefox's slow = waits before each of them, and before no
+   command that only reads, so that the waits of the locators, which ask again and again, keep their pace. *)
+acting = ["browsingContext.navigate", "browsingContext.reload", "browsingContext.traverseHistory",
+  "browsingContext.handleUserPrompt", "input.performActions", "input.setFiles"]
 
 failure(kind, message) = result.Err({Kind: kind, Message: message})
 lost() = failure("closed", "Firefox has closed.")
@@ -54,14 +60,18 @@ defn open(url)
   c = websocket.Dial(url, maxMessage = maxMessage)?
   requests = fiber.Channel()
   gone = fiber.Channel()
-  result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone)), missing, missing))
+  result.Ok(session(requests, gone, fiber.Channel(size = 1), fiber.Spawn(() -> dispatch(c, requests, gone)), missing, missing, 0))
 end
 
 defn call(method, params, s, wait = answerTime)
   (** Sends a command and waits for its answer, at most wait seconds: an Ok of its result, an Err of the kind "browser"
-      with the error's Code and Message, of the kind "closed" once the connection has ended, or of the kind "timeout". *)
+      with the error's Code and Message, of the kind "closed" once the connection has ended, or of the kind "timeout".
+      A command that acts on a page waits the session's slow seconds first. *)
   if isClosed(s.gone)
     return whyEnded(s)
+  end
+  if s.slow > 0 and method in acting
+    sys.Sleep(s.slow)
   end
   reply = fiber.Channel(size = 1)
   fiber.Send({Method: method, Params: params, Reply: reply}, s.requests)
