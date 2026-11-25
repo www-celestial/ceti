@@ -148,7 +148,7 @@ defn saveSignIn(p)
 end
 
 defn asAna(b)
-  s = result.Unwrap(json.Parse(sys.Read(".cesia/signed-in.json")?))
+  s = json.Parse(sys.Read(".cesia/signed-in.json")?)!
   browser.NewPage(b, state = s)
 end
 ```

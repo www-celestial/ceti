@@ -66,3 +66,4 @@ Firefox serves itself: no Node, no driver program, no download of a browser.
 
 - The book, its guide and its speed page, in English and in French, each step beside the same step driven through raw
   BiDi from Node.
+- The examples write `x!`, Cesia's unwrap of a result, for `result.Unwrap(x)`.
